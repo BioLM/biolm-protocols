@@ -1,0 +1,42 @@
+name: IgG & Antigen Structure Prediction
+inputs:
+  H:
+    type: text
+    max_length: 210
+    min_length: 80
+    required: true
+  L:
+    type: text
+    max_length: 210
+    min_length: 80
+    required: true
+  antigen_pdb:
+    type: pdb_text
+    optional: true
+    max_length: 1000000
+progress:
+  total_expected: 1
+ranking:
+  field: full_plddt
+  order: descending
+  top_n: 1
+concurrency:
+  workflow: 2
+  tasks: 8
+writing:
+  deduplicate: false
+tasks:
+- id: immunefold_complex
+  slug: immunefold-antibody
+  action: predict
+  request_body:
+    items:
+    - H: ${{ H }}
+      L: ${{ L }}
+      pdb: ${{ antigen_pdb }}
+  response_mapping:
+    pdb: ${{ response.results[*].pdb }}
+    full_plddt: ${{ response.results[*].full_plddt }}
+    plddt: ${{ response.results[*].plddt}}
+    ptm: ${{ response.results[*].ptm }}
+  fail_on_error: true

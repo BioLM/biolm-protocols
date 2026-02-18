@@ -1,0 +1,49 @@
+name: Evo2 Predict Log Prob from Sequences
+description: Score a list of DNA/RNA sequences for log-probability in batches to rank
+  or filter designs.
+example_inputs:
+  sequences:
+  - ATGCGTACGTAAACCGGTT
+  - GGCCAATTGGCCAA
+  deduplication: false
+inputs:
+  sequences:
+    type: list_of_str
+    label: DNA/RNA sequences
+    required: true
+    max_length: 10000
+    help_text: List of DNA or RNA sequences to score
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: false
+    help_text: Remove duplicate records (by sequence) from results
+progress:
+  total_expected: ${{ len(sequences) }}
+ranking:
+  field: log_prob
+  order: descending
+  top_n: 10
+writing:
+  deduplicate: ${{ deduplication }}
+tasks:
+- id: sequences_batch
+  type: gather
+  from: sequences
+  fields:
+  - sequence
+  into: ${{ batch_size }}
+  skip_if_empty: true
+- id: evo2_predict
+  slug: evo2-1b-base
+  action: predict
+  depends_on:
+  - sequences_batch
+  foreach: ${{ sequences_batch.results }}
+  skip_if_empty: true
+  request_body:
+    items: ${{ item }}
+  response_mapping:
+    log_prob: ${{ response.results[*].log_prob }}
+  fail_on_error: true

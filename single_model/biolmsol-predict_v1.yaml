@@ -1,0 +1,50 @@
+name: BioLMSol Predict
+description: Predict intrinsic protein solubility from sequence. Higher score indicates
+  more soluble.
+example_inputs:
+  sequence: MKFLKFSLLTAVLLSVVFAFSSCGDDDD
+  ph: 7.0
+  include_profile: false
+inputs:
+  sequence:
+    type: text
+    label: Protein sequence
+    required: true
+    help_text: Amino acid sequence to score (1-2048 residues)
+    initial: ''
+    min_length: 1
+    max_length: 2048
+  ph:
+    type: float
+    label: pH
+    optional: true
+    initial: '7.0'
+    min: 0.0
+    max: 14.0
+    help_text: pH value for charge calculations
+  include_profile:
+    type: boolean
+    label: Include per-residue profile
+    optional: true
+    initial: false
+    help_text: Whether to return per-residue solubility profile in results
+progress:
+  total_expected: 1
+ranking:
+  field: solubility_score
+  order: descending
+  top_n: 10
+tasks:
+- id: biolmsol_predict
+  slug: biolmsol
+  action: predict
+  request_body:
+    params:
+      ph: ${{ ph }}
+      include_profile: ${{ include_profile }}
+    items:
+    - sequence: ${{ sequence }}
+  response_mapping:
+    solubility_score: ${{ response.results[0].solubility_score }}
+    profile: ${{ response.results[0].profile }}
+  fail_on_error: true

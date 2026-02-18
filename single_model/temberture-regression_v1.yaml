@@ -1,0 +1,15 @@
+name: TemBERTure Regression
+inputs:
+  sequences:
+    type: list_of_str
+    label: Sequences
+    required: true
+tasks:
+- id: temberture_regression
+  slug: temberture-regression
+  action: predict
+  request_body:
+    items: ${{ sequences | map('dict', 'sequence') }}
+  response_mapping:
+    temperature: ${{ response.results[*].temperature }}
+  fail_on_error: false

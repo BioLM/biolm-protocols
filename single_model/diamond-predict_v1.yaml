@@ -1,0 +1,90 @@
+name: DIAMOND Predict
+description: Search a protein sequence against sequence databases (e.g. USPTO) with
+  BLAST-like alignment using DIAMOND.
+example_inputs:
+  sequence: MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPIL
+  e_value: 0.001
+  max_hits: 5
+  block_size: 6.0
+  sensitivity: fast
+  database: uspto
+inputs:
+  sequence:
+    type: text
+    label: Protein sequence
+    required: true
+    help_text: Amino acid sequence to search (1–2000 residues)
+    initial: ''
+    min_length: 1
+    max_length: 2000
+  e_value:
+    type: float
+    label: E-value threshold
+    optional: true
+    initial: '0.001'
+    help_text: E-value threshold for BLAST hits
+  max_hits:
+    type: integer
+    label: Max hits
+    optional: true
+    initial: '1'
+    min: 1
+    max: 100
+    help_text: Maximum number of hits per query
+  block_size:
+    type: float
+    label: Block size
+    optional: true
+    advanced: true
+    initial: '6.0'
+    help_text: DIAMOND block size parameter
+  sensitivity:
+    type: select
+    label: Sensitivity
+    optional: true
+    initial: fast
+    choices:
+    - fast
+    - mid-sensitive
+    - sensitive
+    - more-sensitive
+    - very-sensitive
+    - ultra-sensitive
+    help_text: Search sensitivity (fast = fastest, ultra-sensitive = most accurate)
+  database:
+    type: select
+    label: Database
+    optional: true
+    choices:
+    - uspto
+    initial: uspto
+    help_text: Database to search (e.g. USPTO)
+progress:
+  total_expected: 1
+ranking:
+  field: score
+  order: descending
+  top_n: 10
+tasks:
+- id: diamond_predict
+  slug: diamond
+  action: predict
+  request_body:
+    params:
+      e_value: ${{ e_value }}
+      max_hits: ${{ max_hits }}
+      block_size: ${{ block_size }}
+      sensitivity: ${{ sensitivity }}
+      databases:
+      - ${{ database }}
+    items:
+    - sequence: ${{ sequence }}
+  response_mapping:
+    identity: ${{ response.results[0].sequences[*].identity }}
+    e_value: ${{ response.results[0].sequences[*].e_value }}
+    score: ${{ response.results[0].sequences[*].score }}
+    subject_id: ${{ response.results[0].sequences[*].subject_id }}
+    subject_seq: ${{ response.results[0].sequences[*].subject_seq }}
+    cigar: ${{ response.results[0].sequences[*].cigar }}
+    alignment_length: ${{ response.results[0].sequences[*].alignment_length }}
+  fail_on_error: true

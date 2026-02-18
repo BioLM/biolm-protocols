@@ -1,0 +1,89 @@
+name: ProGen2 OAS Generate
+description: Generate antibody VH sequences conditioned on a context sequence for
+  design or completion.
+example_inputs:
+  context: MKFLKFSLLTAVLLSVVFAFSSCGDDDD
+  temperature: 0.8
+  top_p: 0.9
+  num_designs: 50
+  max_length: 128
+  deduplication: true
+concurrency:
+  workflow: 1
+  tasks: 16
+inputs:
+  context:
+    type: text
+    label: Protein context
+    required: true
+    help_text: Protein sequence used as context for generation
+    initial: ''
+    min_length: 1
+    max_length: 512
+  temperature:
+    type: float
+    label: Temperature
+    optional: true
+    initial: '0.8'
+    min: 0.0
+    max: 8.0
+    help_text: Sampling temperature
+  top_p:
+    type: float
+    label: Top P
+    optional: true
+    initial: '0.9'
+    min: 0.0
+    max: 1.0
+    help_text: Nucleus sampling
+  num_designs:
+    type: integer
+    label: Num designs
+    optional: true
+    initial: '3'
+    min: 1
+    max: 300
+    help_text: Total number of sequences to generate (via subtasks; up to 3 per request)
+  max_length:
+    type: integer
+    label: Max length
+    optional: true
+    initial: '128'
+    min: 12
+    max: 512
+    help_text: Maximum sequence length to generate
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: true
+    help_text: Remove duplicate generated records from results
+progress:
+  total_expected: ${{ num_designs }}
+writing:
+  deduplicate: ${{ deduplication }}
+ranking:
+  field: ll_mean
+  order: descending
+  top_n: 10
+tasks:
+- id: progen2_generate
+  slug: progen2-oas
+  action: generate
+  subtasks:
+    count: ${{ (num_designs + 2) // 3 }}
+    split_params:
+      num_samples: ${{ min(3, max(0, num_designs - subtask.index * 3)) }}
+  request_body:
+    params:
+      temperature: ${{ temperature }}
+      top_p: ${{ top_p }}
+      num_samples: 1
+      max_length: ${{ max_length }}
+    items:
+    - context: ${{ context }}
+  response_mapping:
+    sequence: ${{ response.results[0][*].sequence }}
+    ll_sum: ${{ response.results[0][*].ll_sum }}
+    ll_mean: ${{ response.results[0][*].ll_mean }}
+  fail_on_error: true
