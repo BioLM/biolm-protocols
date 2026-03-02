@@ -1,0 +1,14 @@
+{
+  "name": "biolm-protocols",
+  "description": "BioLM plugin marketplace for Claude",
+  "owner": {
+    "name": "BioLM",
+    "url": "https://github.com/BioLM"
+  },
+  "plugins": [
+    {
+      "name": "biolm-protocol-editor",
+      "path": "./.claude-plugin/skills/biolm-protocol-editor"
+    }
+  ]
+}
