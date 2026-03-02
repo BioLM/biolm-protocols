@@ -1,0 +1,14 @@
+{
+  "name": "biolm-protocol-editor",
+  "version": "1.0.0",
+  "description": "Creates BioLM Protocol YAML files for chaining model inference pipelines on BioLM.ai — without writing Python.",
+  "author": {
+    "name": "BioLM",
+    "url": "https://github.com/BioLM"
+  },
+  "homepage": "https://github.com/BioLM/biolm-protocols",
+  "repository": "https://github.com/BioLM/biolm-protocols",
+  "license": "MIT",
+  "keywords": ["biolm", "protein", "bioinformatics", "yaml", "pipeline", "protocol"],
+  "skills": "./.claude-plugin/skills/"
+}
