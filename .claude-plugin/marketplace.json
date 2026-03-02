@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "biolm-protocol-editor",
-      "path": "./.claude-plugin/skills/biolm-protocol-editor"
+      "source": "./.claude-plugin/skills/biolm-protocol-editor"
     }
   ]
 }
