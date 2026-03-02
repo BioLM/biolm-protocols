@@ -1,0 +1,153 @@
+name: Example_Protocol_YAML
+
+# ─────────────── Inputs ───────────────
+
+inputs:
+  pdb_str: string
+  heavy_chain: string
+  light_chain: string
+  regions:
+    initial:
+    - CDR1
+    - CDR2
+    - CDR3
+    type: multiselect
+    choices:
+    - CDR1
+    - CDR2
+    - CDR3
+    - all
+    required: true
+  n_samples: 20
+  temperature: 1.0       # sampling temperature for sequence generation
+  max_score_batch: 4      # scoring API limit for predict/score
+  max_fold_batch: 1      # folding API limit for predict
+  max_rmsd_batch: 4      # RMSD API limit for predict
+
+# ───────────── PubSub Configuration ─────────────────
+
+# Configure progress tracking and top-N ranking for real-time updates
+progress:
+  total_expected: ${{ n_samples }}  # Expected number of final records
+
+ranking:
+  field: "log_prob"          # Which response_mapping field to rank by
+  order: "descending"        # "ascending" or "descending"
+  top_n: 10                  # Keep top N records in heap
+
+concurrency:
+  workflow: 1  # number of concurrent instances of the Protocol below to run
+  tasks: 8  # Per-instance per-Task max number of concurrent sub-tasks
+
+writing:
+  deduplicate: true
+  max_dedupe_size: 1000  # 1000 MB
+
+# ───────────────── Tasks ─────────────────────
+
+tasks:
+  # ── 1. Generate structures ───────────────────────────
+  - id: antifold_generate
+    slug:   antifold
+    action: generate
+    request_body:
+      items:
+        - pdb: ${{ pdb_str }}
+      params:
+        num_seq_per_target: ${{ n_samples }}
+        heavy_chain:        ${{ heavy_chain }}
+        light_chain:        ${{ light_chain }}
+        sampling_temp:      ${{ temperature }}
+        regions:            ${{ regions }}
+    response_mapping:
+      # Dual aliased mappings: IgBERT downstream expects "heavy"/"light",
+      # ABodyBuilder3 downstream expects "H"/"L". By mapping both aliases
+      # here, each downstream gather can pick the field names it needs.
+      global_score: "${{ response.results[*].sequences[*].global_score }}"
+      score:        "${{ response.results[*].sequences[*].score }}"
+      heavy:        "${{ response.results[*].sequences[*].heavy }}"
+      H:            "${{ response.results[*].sequences[*].heavy }}"
+      light:        "${{ response.results[*].sequences[*].light }}"
+      L:            "${{ response.results[*].sequences[*].light }}"
+      temperature:  "${{ response.results[*].sequences[*].temperature }}"
+      mutations:    "${{ response.results[*].sequences[*].mutations }}"
+      seq_recovery: "${{ response.results[*].sequences[*].seq_recovery }}"
+    fail_on_error: true
+
+  # ── 2. Batch sequences for scoring ───────────────────────
+  # NOTE: This gather and the next one BOTH pull from antifold_generate
+  # but extract DIFFERENT field names with DIFFERENT batch sizes.
+  # This is the "parallel gathers from same source" pattern.
+  - id: sequences_batches_scoring
+    type:  gather
+    from:  antifold_generate
+    # Combine parallel 'heavy' and 'light' arrays into row dicts for batching
+    fields: [heavy, light]
+    depends_on: [antifold_generate]
+    into: "${{ max_score_batch }}"              # batch size for predict
+    skip_if_empty: true
+
+  # ── 3. Batch sequences for folding ────────────────────────
+  - id: sequences_batches_folding
+    type:  gather
+    from:  antifold_generate
+    # Same source, different field names — ABodyBuilder3 expects H/L
+    fields: [H, L]
+    depends_on: [antifold_generate]
+    into: "${{ max_fold_batch }}"              # batch size for predict
+    skip_if_empty: true
+
+  # ── 4. Score per batch (foreach) ─────────────────────────
+  - id: igbert_score
+    slug:   igbert-paired
+    action: predict
+    depends_on: [sequences_batches_scoring]
+    foreach: ${{ sequences_batches_scoring.results }}        # run once per batch
+    skip_if: "${{ sequences_batches_scoring.empty }}"
+    request_body:
+      items: ${{ item }}  # Use the batched items as the input
+    response_mapping:
+      log_prob: "${{ response.results[*].log_prob }}"
+
+  # ── 5. Fold the generated sequences (foreach) ────────────────────
+  - id: fold_designs
+    slug:   abodybuilder3-plddt
+    action: predict
+    depends_on: [sequences_batches_folding]
+    foreach: ${{ sequences_batches_folding.results }}        # run once per batch
+    request_body:
+      items: ${{ item }}
+      params:
+        plddt: true
+    response_mapping:
+      plddt: "${{ response.results[*].plddt }}"
+      designed_pdb: "${{ response.results[*].pdb }}"
+    fail_on_error: false
+
+  # ── 6. Gather PDB strings for RMSD calculation ─────────────────
+  # Re-gather: collects output from fold_designs to feed the next stage
+  - id: gather_designed_pdbs
+    type:  gather
+    from:  fold_designs
+    # Collect all designed_pdb strings from all fold_designs subtasks
+    fields: [designed_pdb]
+    depends_on: [fold_designs]
+    skip_if_empty: true
+    into: "${{ max_rmsd_batch }}"
+
+  # ── 7. Compute RMSD between input and predicted structures ─────────
+  - id: compute_rmsd
+    slug: biotite
+    action: predict
+    depends_on: [gather_designed_pdbs]
+    foreach: ${{ gather_designed_pdbs.results}}        # run once per batch of 4 RMSD inputs
+    request_body:
+      items:
+        - pdb_a: ${{ item.designed_pdb }}          # Use the individual PDB string
+          pdb_b: ${{ pdb_str }}       # Add the original PDB string
+          chain_ids:
+            a: ["${{ heavy_chain }}", "${{ light_chain }}"]
+            b: ["${{ heavy_chain }}", "${{ light_chain }}"]
+    response_mapping:
+      rmsd: "${{ response.results[*].rmsd }}"
+    skip_if_empty: true

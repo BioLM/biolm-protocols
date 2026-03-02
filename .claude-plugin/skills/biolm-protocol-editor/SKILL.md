@@ -1,27 +1,26 @@
 ---
 name: biolm-protocol-creator
 description: >
-  Creates new BioLM Protocol YAML files and saves them to ~/Developer/protocols.
-  Use this skill whenever the user wants to write, create, draft, or build a BioLM
-  Protocol YAML — including requests like "make a protocol that folds sequences",
-  "write a YAML for HyperMPNN generation", "create a BioLM pipeline for X", or
-  "add a new protocol to the repo". Also trigger when the user describes a multi-step
-  or batch inference workflow on BioLM.ai and asks for it to be codified.
-  If the user mentions ~/Developer/protocols or the BioLM protocols repo, always use
-  this skill. Prefer this skill over biolmai-sdk whenever the deliverable is a YAML file.
+  Creates new BioLM Protocol YAML files. Use this skill whenever the user wants to
+  write, create, draft, or build a BioLM Protocol YAML — including requests like
+  "make a protocol that folds sequences", "write a YAML for HyperMPNN generation",
+  "create a BioLM pipeline for X", or "add a new protocol". Also trigger when the
+  user describes a multi-step or batch inference workflow on BioLM.ai and asks for
+  it to be codified. Prefer this skill over biolmai-sdk whenever the deliverable is
+  a YAML file.
 ---
 
 # BioLM Protocol Creator
 
 You help users write new BioLM Protocol YAML files. These are declarative pipeline
 definitions that chain BioLM model calls with batching, ranking, deduplication, and
-user-controlled inputs — without writing Python. You save the finished file to the
-user's local protocols repo at `~/Developer/protocols`.
+user-controlled inputs — without writing Python. Save the finished YAML file to the
+user's current working directory (or wherever they specify).
 
 **Read `references/schema.md` before writing any YAML.** It contains the full field
 reference, all template expression patterns, and common mistakes to avoid.
 
-19 real-world example protocols are in `references/examples/`. Always consult the
+20 real-world example protocols are in `references/examples/`. Always consult the
 closest example when writing a new protocol.
 
 **Critical:** Every Algorithm + Action combination on BioLM has its own unique
@@ -42,16 +41,74 @@ Follow these steps for every new protocol request:
 Before writing anything, make sure you know:
 - **Which model(s)?** If unclear, suggest candidates from the task description and ask.
   Check `references/algorithm_catalog.md` for known slugs and their available
-  actions. If the user wants help choosing a model, consult the Quick Reference
+  actions, and `references/model_profiles.md` for domain tags, application
+  guidance, and response schemas per action. If the user wants help choosing
+  a model, consult model_profiles.md domain index and the Quick Reference
   table first, then use the discovery methods in **Discovering unknown
   algorithms** if more detail is needed. For any model — known or new — check
-  the Endpoint Detail table for item keys and response fields before writing
-  the YAML, and use live discovery when the static data is insufficient.
+  the Endpoint Detail table and model_profiles.md for item keys and response
+  fields before writing the YAML, and use live discovery when the static data
+  is insufficient. Then proceed to step 1b for domain-appropriate selection.
 - **Single item or batch?** Will the user submit one sequence/structure, or a list?
 - **Key output fields?** What does the user want ranked or returned (e.g., pLDDT, perplexity, CIF)?
 - **User-tunable params?** Are there knobs the user needs (temperature, num_sequences, pH)?
 
 If the request is clear enough to proceed, do so — don't over-ask.
+
+### 1b. Select domain-appropriate models
+
+When the user doesn't specify exact model slugs, consult
+`references/model_profiles.md` to choose the best-suited algorithm for each
+pipeline step. That file contains 87 model profiles with domain tags, response
+schemas per action, application guidance, and related/alternative models.
+Apply these rules:
+
+**Domain specificity**: Always prefer domain-specific models over general-purpose
+ones when the input data matches the specialized domain:
+- Antibody/nanobody inverse folding → `antifold` (NOT `esm-if1` — AntiFold is
+  fine-tuned from ESM-IF1 specifically on IMGT-numbered antibody structures)
+- Antibody/nanobody sequence scoring, log-likelihood, masked completion →
+  `igbert-paired` (NOT `esmc-300m` or `esm2-*` — IgBERT is trained on 2M+
+  paired VH/VL from OAS)
+- Antibody/nanobody structure prediction → `abodybuilder3-plddt` or
+  `immunefold-antibody` (NOT `esmfold` or `alphafold2` — these are general
+  protein folders with no antibody-specific training)
+- General protein inverse folding → `esm-if1`, `protein-mpnn`, `ligand-mpnn`
+- General protein structure prediction → `esmfold`, `alphafold2`, `boltz2`
+- Thermostability prediction → `hyper-mpnn`, `thermompnn`, `thermompnn-d`,
+  `temberture-classifier`, `temberture-regression`, `esm2stabp`
+- ddG / stability change prediction → `thermompnn` (trained for ddG)
+- General stability / solubility prediction → `spurs`, `pro4s-classification`,
+  `pro4s-regression`, `soluprot`
+- Nanobody melting temperature → `tempro-650m`, `tempro-3b`, `tempro-15b`
+- Enzyme function classification → `clean` (EC number prediction)
+- Enzyme sequence generation → `zymctrl` (conditional on EC number)
+- Enzyme stability / fitness → `e1-150m`, `e1-300m`, `e1-600m`
+- DNA/RNA tasks → `dnabert2`, `evo2`, `omni-dna-*`
+
+**Output format compatibility**: Check that consecutive pipeline steps have
+compatible input/output formats:
+- ESMFold, AlphaFold2, ABodyBuilder3 → output PDB strings
+- Boltz-2, Chai-1 → output CIF strings (mmCIF, NOT PDB)
+- Biotite RMSD → expects PDB input (not CIF)
+- AntiFold → expects PDB input, returns sequences (heavy/light separately)
+
+**Cost vs accuracy trade-off**: If the user mentions cost, throughput, or
+"quick screen":
+- ESMFold is faster/cheaper but less accurate for antibodies
+- ABodyBuilder3 is more accurate for antibody Fv/CDR structures
+- TEMPRO 650M is faster/cheaper; TEMPRO 3B/15B are more accurate
+
+**Paired input models**: Some antibody models require separate heavy/light
+inputs (not a single concatenated sequence):
+- IgBERT Paired: item keys `heavy` + `light` (lowercase; or `sequence` for
+  unpaired single-chain)
+- ABodyBuilder3 pLDDT: item keys `H` + `L` (UPPERCASE single letters)
+- AntiFold: item key `pdb` with chain ID params (`heavy_chain`, `light_chain`)
+- ImmuneFold-Antibody: item keys `H` + `L` (uppercase)
+
+If uncertain about model choice, present the user with 2–3 options noting
+trade-offs, and let them decide.
 
 ### 2. Pick the right pattern
 
@@ -63,6 +120,7 @@ If the request is clear enough to proceed, do so — don't over-ask.
 | PDB input + generation | **PDB + subtasks** | `hypermpnn_generate_single.yaml` |
 | Co-fold sequence + ligand | **Molecules list** | `boltz2_cofolding_pulldown.yaml` |
 | Generate → score (multi-task) | **Chained pipeline** | `updated-hypermpnn-with-chain-c86619_v6.yaml` |
+| Generate → score + fold + RMSD (branching) | **Branching DAG** | `ab_antifold_generate_score_fold_rmsd.yaml` |
 
 See `references/schema.md` §Patterns and `references/examples/` for concrete YAML.
 
@@ -91,6 +149,62 @@ Follow the naming convention and directory structure below. Start from the close
 existing protocol as a template when one exists. Always include `example_inputs` with
 realistic values — this is what the BioLM UI uses to pre-fill the form.
 
+### 4b. Response mapping self-check (mandatory)
+
+After writing the YAML, re-read EVERY task's `response_mapping` and verify
+each field against the model's known response schema. This step catches the
+most common Protocol errors.
+
+**For each task with a `response_mapping`:**
+
+1. Look up the slug + action in `references/model_profiles.md` (Response
+   Schema section) or `references/algorithm_catalog.md` (Endpoint Detail
+   table).
+
+2. Verify the **response path pattern**:
+   - predict/encode → fields at `response.results[*].field_name`
+   - generate (most models) → fields at `response.results[0][*].field_name`
+   - generate (AntiFold) → fields at `response.results[*].sequences[*].field_name`
+     (note: AntiFold generate nests sequences INSIDE each result item — it
+     does NOT use the standard `[0][*]` generate pattern)
+   - IMPORTANT: The Endpoint Detail table's "Response path" column and the
+     model_profiles.md Response Schema section show the correct nesting.
+     Double-check them.
+
+3. Verify **exact field names** — these are case-sensitive and model-specific:
+   - AntiFold generate returns: `global_score`, `score`, `heavy`, `light`,
+     `temperature`, `mutations`, `seq_recovery` (inside `sequences[*]`)
+   - AntiFold predict returns: `global_score`, `heavy`, `light` (at top level)
+   - IgBERT predict returns: `log_prob` (not `score` or `likelihood`)
+   - IgBERT generate returns: `heavy`, `light` (or `sequence` for unpaired)
+   - ABodyBuilder3 predict returns: `pdb`, `plddt` (not `pdb_folded`,
+     not `designed_pdb`)
+   - Biotite predict returns: `rmsd` (single float)
+   - ESMFold predict returns: `pdb`, `mean_plddt`, `ptm`
+   - ESM-IF1 generate returns: `sequence`, `recovery`
+   - TEMPRO predict returns: `tm` (single float, °C)
+
+4. Verify **paired input field names** match the model's expectations:
+   - IgBERT uses `heavy` and `light` (lowercase)
+   - ABodyBuilder3 uses `H` and `L` (uppercase single letters)
+   - AntiFold uses `pdb` with chain ID params (`heavy_chain`, `light_chain`)
+   - ImmuneFold-Antibody uses `H` and `L` (uppercase)
+
+5. If a field name or path cannot be confirmed from static references,
+   note it in a YAML comment: `# TODO: verify field name against live API`
+
+**Common pitfalls to catch:**
+- AntiFold generate: mapping a single `sequence` field when the model
+  actually returns separate `heavy` and `light` chains
+- Generate actions: using `response.results[*]` when it should be
+  `response.results[0][*]` (or vice versa for AntiFold)
+- ABodyBuilder3: using lowercase `h`/`l` when the model requires
+  uppercase `H`/`L` for input item keys
+- Mixing up response fields across similar models (e.g., ESMFold's
+  `mean_plddt` vs ABodyBuilder3's `plddt`)
+- IgBERT predict: the default response field is `log_prob`, not embeddings
+  (embeddings require an `include` param)
+
 ### 5. Validate and save
 
 ```bash
@@ -101,8 +215,7 @@ biolmai protocol validate <path-to-yaml>
 python3 -c "import yaml; yaml.safe_load(open('<path>').read()); print('YAML syntax OK')"
 ```
 
-Save to `~/Developer/protocols/single_model/<filename>_v1.yaml` for single-model protocols.
-Tell the user the full path and suggest `git add` + `git commit` since the repo tracks these.
+Save the file using the naming convention below. Tell the user the full path.
 
 ---
 
@@ -130,7 +243,7 @@ Tell the user the full path and suggest `git add` + `git commit` since the repo 
 ## Directory structure
 
 ```
-~/Developer/protocols/
+<output-dir>/
 └── single_model/      ← All protocols that wrap a single BioLM model
     └── <name>_v{N}.yaml
 ```
@@ -785,6 +898,141 @@ Key points for multi-task:
 - `depends_on` ensures execution order
 - Use `fail_on_error: false` for non-critical annotation/scoring tasks
 
+### Pattern 8: Branching DAG with aliased mappings and parallel gathers
+
+A complex multi-task pipeline where one generation step fans out to multiple
+parallel processing paths (scoring and folding), then a later stage re-gathers
+results for further processing (RMSD). This pattern introduces three advanced
+concepts not shown in Patterns 1–7.
+
+```yaml
+# See: ab_antifold_generate_score_fold_rmsd.yaml
+# Pipeline topology (DAG, not linear):
+#
+#   antifold_generate
+#     ├── sequences_batches_scoring ──► igbert_score
+#     └── sequences_batches_folding ──► fold_designs
+#                                          └── gather_designed_pdbs ──► compute_rmsd
+
+tasks:
+  - id: antifold_generate
+    slug: antifold
+    action: generate
+    request_body:
+      items:
+        - pdb: ${{ pdb_str }}
+      params:
+        num_seq_per_target: ${{ n_samples }}
+        heavy_chain:        ${{ heavy_chain }}
+        light_chain:        ${{ light_chain }}
+        sampling_temp:      ${{ temperature }}
+        regions:            ${{ regions }}
+    response_mapping:
+      # ── Concept 1: DUAL ALIASED RESPONSE MAPPINGS ──
+      # Map the same response field to multiple output key names.
+      # IgBERT downstream expects "heavy"/"light" (lowercase).
+      # ABodyBuilder3 downstream expects "H"/"L" (uppercase).
+      # By emitting both aliases from one task, each downstream gather
+      # can pick the field names its model requires.
+      heavy:        "${{ response.results[*].sequences[*].heavy }}"
+      H:            "${{ response.results[*].sequences[*].heavy }}"
+      light:        "${{ response.results[*].sequences[*].light }}"
+      L:            "${{ response.results[*].sequences[*].light }}"
+      global_score: "${{ response.results[*].sequences[*].global_score }}"
+      score:        "${{ response.results[*].sequences[*].score }}"
+      seq_recovery: "${{ response.results[*].sequences[*].seq_recovery }}"
+    fail_on_error: true
+
+  # ── Concept 2: MULTIPLE PARALLEL GATHERS FROM SAME SOURCE ──
+  # Two gather tasks BOTH pull from antifold_generate, but with
+  # different field names and different batch sizes. This creates
+  # a branching DAG rather than a linear chain.
+  - id: sequences_batches_scoring
+    type: gather
+    from: antifold_generate
+    fields: [heavy, light]            # IgBERT key names
+    depends_on: [antifold_generate]
+    into: "${{ max_score_batch }}"
+    skip_if_empty: true
+
+  - id: sequences_batches_folding
+    type: gather
+    from: antifold_generate
+    fields: [H, L]                    # ABodyBuilder3 key names
+    depends_on: [antifold_generate]
+    into: "${{ max_fold_batch }}"
+    skip_if_empty: true
+
+  - id: igbert_score
+    slug: igbert-paired
+    action: predict
+    depends_on: [sequences_batches_scoring]
+    foreach: ${{ sequences_batches_scoring.results }}
+    skip_if: "${{ sequences_batches_scoring.empty }}"
+    request_body:
+      items: ${{ item }}
+    response_mapping:
+      log_prob: "${{ response.results[*].log_prob }}"
+
+  - id: fold_designs
+    slug: abodybuilder3-plddt
+    action: predict
+    depends_on: [sequences_batches_folding]
+    foreach: ${{ sequences_batches_folding.results }}
+    request_body:
+      items: ${{ item }}
+      params:
+        plddt: true
+    response_mapping:
+      plddt: "${{ response.results[*].plddt }}"
+      designed_pdb: "${{ response.results[*].pdb }}"
+    fail_on_error: false
+
+  # ── Concept 3: RE-GATHERING FROM A DOWNSTREAM TASK ──
+  # Collect fold output, re-batch it, and feed another stage.
+  # This creates a 3+ stage DAG: generate → fold → RMSD.
+  - id: gather_designed_pdbs
+    type: gather
+    from: fold_designs
+    fields: [designed_pdb]
+    depends_on: [fold_designs]
+    into: "${{ max_rmsd_batch }}"
+    skip_if_empty: true
+
+  - id: compute_rmsd
+    slug: biotite
+    action: predict
+    depends_on: [gather_designed_pdbs]
+    foreach: ${{ gather_designed_pdbs.results }}
+    request_body:
+      items:
+        - pdb_a: ${{ item.designed_pdb }}
+          pdb_b: ${{ pdb_str }}
+          chain_ids:
+            a: ["${{ heavy_chain }}", "${{ light_chain }}"]
+            b: ["${{ heavy_chain }}", "${{ light_chain }}"]
+    response_mapping:
+      rmsd: "${{ response.results[*].rmsd }}"
+    skip_if_empty: true
+```
+
+Key concepts demonstrated in this pattern:
+
+- **Dual aliased response mappings** — Map the same response field to multiple
+  output key names (e.g., `heavy` and `H` both pointing to
+  `response.results[*].sequences[*].heavy`). This lets one upstream task feed
+  multiple downstream models that expect different field names without
+  intermediate transformation tasks.
+
+- **Multiple parallel gathers from the same source** — Two or more gather tasks
+  can reference the same `from: <task_id>`, each extracting different `fields`
+  with different `into` batch sizes. This creates a branching DAG topology where
+  a single generation step fans out to parallel scoring/folding/annotation paths.
+
+- **Re-gathering from a downstream task** — A gather can collect output from a
+  task that is itself downstream of another gather+foreach. This enables 3+ stage
+  pipelines like generate → fold → RMSD, where each stage has its own batching.
+
 ---
 
 ## Template expression quick reference
@@ -818,6 +1066,7 @@ Key points for multi-task:
 | Predict (flat) | `response.results[*].field` | `response.results[*].mean_plddt` |
 | Predict (nested) | `response.results[*].parent.field` | `response.results[*].confidence.confidence_score` |
 | Generate | `response.results[0][*].field` | `response.results[0][*].sequence` |
+| AntiFold generate | `response.results[*].sequences[*].field` | `response.results[*].sequences[*].heavy` |
 | DIAMOND | `response.results[0].sequences[*].field` | `response.results[0].sequences[*].score` |
 | Peptides | `response.results[*].features.field` | `response.results[*].features.molecular_weight` |
 | AlphaFold2 | `response.results[*].pdbs[0]` | Indexed sub-array |
@@ -827,8 +1076,8 @@ Key points for multi-task:
 
 ## Existing protocols for reference
 
-These are already in `~/Developer/protocols/single_model/`. Use them as starting
-points — copy the closest one and modify rather than writing from scratch:
+These are examples of real protocols. Use them as starting points — copy the
+closest one and modify rather than writing from scratch:
 
 | File | Pattern | Notes |
 |---|---|---|
@@ -844,15 +1093,17 @@ points — copy the closest one and modify rather than writing from scratch:
 | `igg-antigen-structure-prediction.yaml` | Single-item predict | Multi-chain molecules format |
 | `temberture-regression_v1.yaml` | Gather + foreach batch | Regression output |
 
-**19 additional examples** are in `references/examples/` covering all patterns above.
+**20 additional examples** are in `references/examples/` covering all patterns above,
+including the branching DAG example `ab_antifold_generate_score_fold_rmsd.yaml`.
 
 ---
 
 ## Additional references
 
+- `references/model_profiles.md` — 87 model profiles with domain tags, response schemas per action, application guidance, and related/alternative models. **Consult this first for model selection and response field verification.**
 - `references/schema.md` — Full protocol YAML authoring reference (595 lines)
 - `references/algorithm_catalog.md` — Quick reference (76 algorithms, Feb 2026) + endpoint detail (39 algorithms, Sept 2025) + discovery instructions
-- `references/examples/` — 19 real-world protocol YAML files
+- `references/examples/` — 20 real-world protocol YAML files
 - `references/sdk-docs/SYNTAX_NOTE.md` — Conflicts between RST docs and real YAMLs
 - `references/sdk-docs/protocol_schema.json` — Formal JSON Schema for validation
 - `references/sdk-docs/` — Python SDK RST docs (about, inputs, tasks, execution, output, schema)
@@ -868,5 +1119,5 @@ points — copy the closest one and modify rather than writing from scratch:
 
 **Read `references/sdk-docs/SYNTAX_NOTE.md`** for quick syntax rules (e.g.,
 `${{ }}` is required, no `inputs.` prefix, `response_mapping` must be a dict).
-The real YAMLs in `~/Developer/protocols` and `references/examples/` are always
-the ground truth for patterns and semantics.
+The real YAMLs in `references/examples/` are always the ground truth for
+patterns and semantics.
