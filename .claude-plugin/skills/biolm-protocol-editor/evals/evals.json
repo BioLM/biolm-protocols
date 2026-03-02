@@ -1,0 +1,23 @@
+{
+  "skill_name": "biolm-protocol-creator",
+  "evals": [
+    {
+      "id": 0,
+      "name": "batch-esm2stabp",
+      "prompt": "create a protocol that takes a list of protein sequences and runs ESM2StabP stability prediction on all of them in batches of 8, ranking by melting temperature descending. user should be able to toggle deduplication.",
+      "expected_output": "A valid YAML file saved to ~/Developer/protocols/single_model/ following naming convention, with gather+foreach batch pattern, correct response_mapping for ESM2StabP, and deduplication toggle."
+    },
+    {
+      "id": 1,
+      "name": "boltz2-cofold",
+      "prompt": "write a protocol that co-folds two protein sequences using boltz2. user provides chain A and chain B as separate inputs. rank by confidence_score.",
+      "expected_output": "A valid YAML file using the molecules format for Boltz2 with two separate text inputs (H/A and B chains), correct molecules list in request_body, response_mapping for confidence_score, saved to single_model/."
+    },
+    {
+      "id": 2,
+      "name": "progen2-antibody-generation",
+      "prompt": "make a protocol for generating antibody sequences with progen2-oas. the user should control number of sequences (up to 500), temperature, and max_length. rank by lowest perplexity.",
+      "expected_output": "A valid YAML using progen2-oas slug, subtasks fan-out pattern with correct subtask.index split_params, generation response_mapping using results[0][*], perplexity ranked ascending, user-controllable num_samples/temperature/max_length inputs."
+    }
+  ]
+}

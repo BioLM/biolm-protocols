@@ -1,0 +1,64 @@
+name: ESM2 Predict Log Prob from Sequences
+description: Score a list of protein sequences for log-probability in batches to rank or filter designs.
+
+example_inputs:
+  sequences: ["MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI", "MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI", "MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI", "MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI"]
+  batch_size: 8
+  deduplication: false
+
+inputs:
+  sequences:
+    type: list_of_str
+    label: Sequences
+    required: true
+    max_length: 10000
+    help_text: List of protein sequences to score
+  batch_size:
+    type: integer
+    label: Batch Size
+    optional: true
+    advanced: true
+    initial: '8'
+    min: 1
+    max: 8
+    help_text: Number of sequences per batch
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: false
+    help_text: Remove duplicate records (by sequence) from results; default false keeps one record per input sequence
+
+progress:
+  total_expected: ${{ len(sequences) }}
+
+ranking:
+  field: log_prob
+  order: descending
+  top_n: 10
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+tasks:
+  # Gather input sequences into batches with proper format
+  - id: sequences_batch
+    type: gather
+    from: sequences  # Reference input parameter directly
+    fields: [sequence]  # Transform each string into {"sequence": "..."}
+    into: ${{ batch_size }}
+    skip_if_empty: true
+    
+  # Predict log probabilities for each batch
+  - id: esm2_predict
+    slug: esm2-8m
+    action: predict
+    depends_on: [sequences_batch]
+    foreach: ${{ sequences_batch.results }}
+    skip_if_empty: true
+    request_body:
+      items: ${{ item }}
+    response_mapping:
+      log_prob: ${{ response.results[*].log_prob }}
+    fail_on_error: true
+

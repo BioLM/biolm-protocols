@@ -1,0 +1,132 @@
+name: HyperMPNN Generate
+description: Design thermostable protein sequences from a single-chain PDB using HyperMPNN (structure-conditioned, thermostability-biased).
+
+example_inputs:
+  pdb_str: "ATOM      1  N   MET A   1      10.000  10.000  10.000  1.00 20.00           N\nATOM      2  CA  MET A   1      11.200  10.500  10.300  1.00 20.00           C\nATOM      3  C   MET A   1      12.100   9.500  11.000  1.00 20.00           C\nATOM      4  O   MET A   1      11.900   8.300  10.800  1.00 20.00           O\nATOM      5  N   LYS A   2      13.100  10.000  11.800  1.00 20.00           N\nATOM      6  CA  LYS A   2      14.100   9.200  12.500  1.00 20.00           C\nATOM      7  C   LYS A   2      15.300   8.900  11.600  1.00 20.00           C\nATOM      8  O   LYS A   2      16.200   8.100  11.900  1.00 20.00           O\nATOM      9  N   PHE A   3      17.000   9.500  11.200  1.00 20.00           N\nATOM     10  CA  PHE A   3      18.100  10.200  10.400  1.00 20.00           C\nATOM     11  C   PHE A   3      19.200   9.400   9.700  1.00 20.00           C\nATOM     12  O   PHE A   3      20.100   8.700  10.200  1.00 20.00           O\nATOM     13  N   LEU A   4      19.100  10.500   8.500  1.00 20.00           N\nATOM     14  CA  LEU A   4      20.000  11.800   7.900  1.00 20.00           C\nATOM     15  C   LEU A   4      21.200  11.400   6.900  1.00 20.00           C\nATOM     16  O   LEU A   4      22.100  12.200   6.500  1.00 20.00           O\nATOM     17  N   VAL A   5      21.100  10.200   6.400  1.00 20.00           N\nATOM     18  CA  VAL A   5      22.200   9.600   5.500  1.00 20.00           C\nATOM     19  C   VAL A   5      23.100   8.500   6.100  1.00 20.00           C\nATOM     20  O   VAL A   5      24.200   8.700   6.600  1.00 20.00           O\nATOM     21  N   ALA A   6      22.600   7.300   6.200  1.00 20.00           N\nATOM     22  CA  ALA A   6      23.300   6.100   6.800  1.00 20.00           C\nATOM     23  C   ALA A   6      24.500   5.400   6.100  1.00 20.00           C\nATOM     24  O   ALA A   6      25.400   4.800   6.700  1.00 20.00           O\nATOM     25  N   GLY A   7      24.400   5.600   4.800  1.00 20.00           N\nATOM     26  CA  GLY A   7      25.500   5.000   3.900  1.00 20.00           C\nATOM     27  C   GLY A   7      26.600   4.100   4.500  1.00 20.00           C\nATOM     28  O   GLY A   7      27.600   4.500   5.100  1.00 20.00           O\nATOM     29  N   ILE A   8      26.300   2.900   4.200  1.00 20.00           N\nATOM     30  CA  ILE A   8      27.200   1.900   4.800  1.00 20.00           C\nATOM     31  C   ILE A   8      28.400   1.300   4.000  1.00 20.00           C\nATOM     32  O   ILE A   8      29.300   0.700   4.600  1.00 20.00           O\nATOM     33  N   SER A   9      28.300   1.500   2.700  1.00 20.00           N\nATOM     34  CA  SER A   9      29.400   1.000   1.800  1.00 20.00           C\nATOM     35  C   SER A   9      30.500   0.100   2.400  1.00 20.00           C\nATOM     36  O   SER A   9      31.500   0.400   3.000  1.00 20.00           O\nATOM     37  N   THR A  10      30.200  -1.000   2.100  1.00 20.00           N\nATOM     38  CA  THR A  10      31.100  -2.000   2.700  1.00 20.00           C\nATOM     39  C   THR A  10      32.200  -2.800   1.900  1.00 20.00           C\nATOM     40  O   THR A  10      33.100  -2.400   1.200  1.00 20.00           O\nTER     41      THR A  10\nEND"
+  temperature: 0.25
+  number_of_batches: 16
+  batch_size: 50
+  deduplication: true
+
+concurrency:
+  workflow: 1
+  tasks: 8
+
+inputs:
+  pdb_str:
+    type: pdb_text
+    label: Protein PDB
+    required: true
+    max_length: 2500000
+    help_text: Protein backbone and coordinates in PDB format.
+  temperature:
+    type: float
+    label: Temperature
+    optional: true
+    initial: '0.1'
+    min: 0.001
+    max: 4
+    step: 0.01
+    help_text: Controls sampling diversity; higher values increase sequence variability.
+  number_of_batches:
+    type: integer
+    label: Number of Batches
+    optional: true
+    advanced: true
+    initial: '1'
+    min: 1
+    max: 48
+    help_text: Number of independent design batches to generate.
+  batch_size:
+    type: integer
+    label: Batch Size
+    optional: true
+    advanced: true
+    initial: '50'
+    min: 1
+    max: 1000
+    help_text: Number of sequences generated per batch.
+  fixed_residues:
+    type: list_of_str
+    label: Fixed Residues
+    optional: true
+    advanced: true
+    initial: []
+    max_input_length: 10000
+    help_text: Residues kept fixed during design, specified as chain:residue identifiers.
+  redesigned_residues:
+    type: list_of_str
+    label: Redesigned Residues
+    optional: true
+    advanced: true
+    initial: []
+    max_input_length: 10000
+    help_text: Residues explicitly selected for redesign as chain:residue identifiers.
+  omit_AA:
+    type: text
+    label: Disallowed Amino Acids
+    optional: true
+    min_length: 0
+    max_length: 20
+    initial: ''
+    help_text: One-letter amino acids forbidden at all positions.
+    advanced: true
+  chains_to_design:
+    type: list_of_str
+    label: Chains to Design
+    optional: true
+    initial: []
+    max_input_length: 20
+    help_text: Chain identifiers to redesign; leave empty to design all chains.
+    advanced: true
+  parse_these_chains_only:
+    type: list_of_str
+    label: Chains to Parse
+    optional: true
+    initial: []
+    max_input_length: 20
+    help_text: Chain IDs to parse from the PDB; leave empty to parse all.
+    advanced: true
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: true
+    help_text: Remove duplicate generated sequences from results
+
+progress:
+  total_expected: ${{ number_of_batches * batch_size }}
+
+ranking:
+  field: overall_confidence
+  order: descending
+  top_n: 10
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+tasks:
+  - id: hypermpnn_generate
+    slug: hyper-mpnn
+    action: generate
+    subtasks:
+      count: ${{ max(1, (number_of_batches + 11) // 12) }}
+      split_params:
+        number_of_batches: ${{ min(12, number_of_batches) }}
+    request_body:
+      params:
+        temperature: ${{ temperature }}
+        fixed_residues: ${{ fixed_residues }}
+        redesigned_residues: ${{ redesigned_residues }}
+        omit_AA: ${{ omit_AA }}
+        chains_to_design: ${{ chains_to_design }}
+        parse_these_chains_only: ${{ parse_these_chains_only }}
+        number_of_batches: ${{ number_of_batches }}
+        batch_size: ${{ min(batch_size, 500) }}
+      items:
+        - pdb: ${{ pdb_str }}
+    response_mapping:
+      sequence: ${{ response.results[*].sequence }}
+      overall_confidence: ${{ response.results[*].overall_confidence }}
+      pdb: ${{ response.results[*].pdb }}
+    fail_on_error: true
