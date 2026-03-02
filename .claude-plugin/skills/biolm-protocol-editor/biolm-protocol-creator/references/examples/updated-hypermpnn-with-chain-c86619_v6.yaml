@@ -1,0 +1,164 @@
+name: Updated HyperMPNN with Chain
+progress:
+  total_expected: ${{ number_of_batches * batch_size }}
+ranking:
+  field: esmc_300m_lp
+  order: descending
+  top_n: 10
+writing:
+  deduplicate: true
+  max_dedupe_size: 500
+concurrency:
+  workflow: 1
+  tasks: 8
+inputs:
+  parse_these_chains_only:
+    type: list_of_str
+    label: Chains to Parse
+    optional: true
+    advanced: true
+  esmc_batch_size:
+    type: integer
+    label: ESMC Batch Size
+    optional: true
+    advanced: true
+    initial: '8'
+    min: 1
+    max: 8
+    help_text: Batch size for ESMC scoring.
+  clean_batch_size:
+    type: integer
+    label: CLEAN Batch Size
+    optional: true
+    advanced: true
+    initial: '10'
+    min: 1
+    max: 10
+    help_text: Batch size for CLEAN predict
+  pro4s_batch_size:
+    type: integer
+    label: Pro4S Batch Size
+    optional: true
+    advanced: true
+    initial: '4'
+    min: 1
+    max: 4
+    help_text: Batch size for Pro4S Regression.
+  temberture_batch_size:
+    type: integer
+    label: TemBERTure Batch Size
+    optional: true
+    advanced: true
+    initial: '4'
+    min: 1
+    max: 4
+    help_text: Batch size for TemBERTure regression.
+  pdb_str:
+    type: pdb_text
+    label: Protein PDB
+    required: true
+    max_length: 2500000
+    help_text: Protein backbone and coordinates in PDB format.
+  temperature:
+    type: float
+    label: Temperature
+    required: true
+    initial: '0.1'
+    min: 0.001
+    max: 4
+    step: 0.01
+    help_text: Controls sampling diversity; higher values increase sequence variability.
+  number_of_batches:
+    type: integer
+    label: Number of Batches
+    optional: true
+    advanced: true
+    initial: '1'
+    min: 1
+    max: 48
+    help_text: Number of independent design batches to generate.
+  batch_size:
+    type: integer
+    label: Batch Size
+    optional: true
+    advanced: true
+    initial: '1'
+    min: 1
+    max: 1000
+    help_text: Number of sequences generated per batch.
+  fixed_residues:
+    type: list_of_str
+    label: Fixed Residues
+    optional: true
+    advanced: true
+    initial: []
+    help_text: Residues kept fixed during design, specified as chain:residue identifiers.
+  redesigned_residues:
+    type: list_of_str
+    label: Redesigned Residues
+    optional: true
+    advanced: true
+    initial: []
+    help_text: Residues explicitly selected for redesign as chain:residue identifiers.
+  omit_AA:
+    type: text
+    label: Disallowed Amino Acids
+    optional: true
+    min_length: 0
+    max_length: 20
+    initial: ''
+    help_text: One-letter amino acids forbidden at all positions.
+    advanced: true
+  chains_to_design:
+    type: list_of_str
+    label: Chains to Design
+    optional: true
+    initial: []
+    help_text: Chain identifiers to redesign; leave empty to design all chains.
+    advanced: true
+tasks:
+- id: hyper_mpnn
+  slug: hyper-mpnn
+  action: generate
+  subtasks:
+    count: ${{ max(1, (number_of_batches + 11) // 12) }}
+    split_params:
+      number_of_batches: ${{ min(12, number_of_batches) }}
+  request_body:
+    params:
+      temperature: ${{ temperature }}
+      fixed_residues: ${{ fixed_residues }}
+      redesigned_residues: ${{ redesigned_residues }}
+      omit_AA: ${{ omit_AA }}
+      chains_to_design: ${{ chains_to_design }}
+      number_of_batches: ${{ number_of_batches }}
+      batch_size: ${{ min(batch_size, 500) }}
+      parse_these_chains_only: ${{ parse_these_chains_only }}
+    items:
+    - pdb: ${{ pdb_str }}
+  response_mapping:
+    sequence: ${{ response.results[*].sequence }}
+    overall_confidence: ${{ response.results[*].overall_confidence }}
+    seq_rec: ${{ response.results[*].seq_rec }}
+  fail_on_error: true
+- id: sequences_batches_esmc
+  type: gather
+  from: hyper_mpnn
+  fields:
+  - sequence
+  depends_on:
+  - hyper_mpnn
+  into: ${{ esmc_batch_size }}
+  skip_if_empty: true
+- id: esmc_scoring
+  slug: esmc-300m
+  action: score
+  depends_on:
+  - sequences_batches_esmc
+  foreach: ${{ sequences_batches_esmc.results }}
+  skip_if_empty: true
+  request_body:
+    items: ${{ item }}
+  response_mapping:
+    esmc_300m_lp: ${{ response.results[*].log_prob }}
+  fail_on_error: false

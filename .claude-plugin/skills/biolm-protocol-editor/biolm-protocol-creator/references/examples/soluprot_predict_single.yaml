@@ -1,0 +1,35 @@
+name: SoluProt Predict
+description: Predict whether a protein will express as soluble in E. coli to prioritize cloning and expression candidates.
+
+example_inputs:
+  sequence: "MKFLKFSLLTAVLLSVVFAFSSCGDDDDDDDDDD"
+
+inputs:
+  sequence:
+    type: text
+    label: Protein sequence
+    required: true
+    help_text: Protein sequence for solubility prediction (min 20 amino acids)
+    initial: ''
+    min_length: 20
+    max_length: 5000
+
+progress:
+  total_expected: 1
+
+ranking:
+  field: soluble
+  order: descending
+  top_n: 10
+
+tasks:
+  - id: soluprot_predict
+    slug: soluprot
+    action: predict
+    request_body:
+      items:
+        - sequence: ${{ sequence }}
+    response_mapping:
+      soluble: ${{ response.results[*].soluble }}
+      is_soluble: ${{ response.results[*].is_soluble }}
+    fail_on_error: true

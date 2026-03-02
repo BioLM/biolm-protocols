@@ -1,0 +1,61 @@
+name: ESM1b Predict Log Prob from Sequences
+description: Score a list of protein sequences with ESM1b for log-probability in batches.
+
+example_inputs:
+  sequences: ["MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI"]
+  batch_size: 8
+  deduplication: false
+
+inputs:
+  sequences:
+    type: list_of_str
+    label: Protein sequences
+    required: true
+    max_length: 10000
+    help_text: List of protein sequences to score with ESM1b
+  batch_size:
+    type: integer
+    label: Batch Size
+    optional: true
+    advanced: true
+    initial: '8'
+    min: 1
+    max: 8
+    help_text: Number of sequences per batch
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: false
+    help_text: Remove duplicate records (by sequence) from results
+
+progress:
+  total_expected: ${{ len(sequences) }}
+
+ranking:
+  field: log_prob
+  order: descending
+  top_n: 10
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+tasks:
+  - id: sequences_batch
+    type: gather
+    from: sequences
+    fields: [sequence]
+    into: ${{ batch_size }}
+    skip_if_empty: true
+
+  - id: esm1b_predict
+    slug: esm1b
+    action: predict
+    depends_on: [sequences_batch]
+    foreach: ${{ sequences_batch.results }}
+    skip_if_empty: true
+    request_body:
+      items: ${{ item }}
+    response_mapping:
+      log_prob: ${{ response.results[*].log_prob }}
+    fail_on_error: true
