@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# TEMPLATE — copy this file to your source repo at:
+#   .github/workflows/notify-skills-marketplace.yml
+#
+# Prerequisites (one-time, org-level):
+#   1. The GitHub App "skills-marketplace-sync" must be installed on the org.
+#   2. APP_ID and APP_PRIVATE_KEY must be set as org-level Actions secrets
+#      (or as repo-level secrets on this repo).
+# ---------------------------------------------------------------------------
+
+name: Notify Skills Marketplace
+
+# Fires whenever a commit lands on main that touches .claude/ or .claude-plugin[s]/.
+# This covers both direct pushes and merged pull requests.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".claude/**"
+      - ".claude-plugin/**"
+      - ".claude-plugins/**"
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # need HEAD~1 to diff changed paths
+
+      - name: Collect changed skill/command paths
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD \
+            -- '.claude/' '.claude-plugin/' '.claude-plugins/' \
+            | tr '\n' ',')
+          echo "paths=$CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          # Target the marketplace repo specifically
+          repositories: biolm-claude-skills
+
+      - name: Dispatch to marketplace repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: BioLM/biolm-claude-skills
+          event-type: skills-changed
+          client-payload: |
+            {
+              "source_repo": "${{ github.repository }}",
+              "sha": "${{ github.sha }}",
+              "changed_paths": "${{ steps.changed.outputs.paths }}",
+              "ref": "${{ github.ref }}"
+            }
