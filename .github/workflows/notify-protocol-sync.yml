@@ -1,0 +1,87 @@
+name: Notify biolm-web of Protocol Changes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "single_model/*.yaml"
+      - "single_model/*.yml"
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed protocols
+        id: detect
+        run: |
+          python3 - <<'EOF'
+          import subprocess, json, os, sys
+
+          # For workflow_dispatch, sync everything
+          if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+              result = subprocess.run(
+                  ["find", "single_model", "-name", "*.yaml", "-o", "-name", "*.yml"],
+                  capture_output=True, text=True,
+              )
+              protocols = [
+                  {"filename": p.split("/")[-1], "change_type": "updated_protocol"}
+                  for p in result.stdout.strip().split("\n") if p
+              ]
+          else:
+              result = subprocess.run(
+                  ["git", "diff", "--name-status", "HEAD~1", "HEAD"],
+                  capture_output=True, text=True,
+              )
+              protocols = {}
+              for line in result.stdout.strip().split("\n"):
+                  if not line:
+                      continue
+                  parts = line.split("\t")
+                  if len(parts) < 2:
+                      continue
+                  status, path = parts[0], parts[1]
+                  if not path.startswith("single_model/"):
+                      continue
+                  if not (path.endswith(".yaml") or path.endswith(".yml")):
+                      continue
+                  filename = path.split("/")[-1]
+                  if filename not in protocols:
+                      protocols[filename] = "new_protocol" if status == "A" else "updated_protocol"
+              protocols = [{"filename": f, "change_type": ct} for f, ct in protocols.items()]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              if protocols:
+                  fh.write("has_changes=true\n")
+                  fh.write(f"protocols={json.dumps(protocols)}\n")
+                  print(f"Detected: {json.dumps(protocols, indent=2)}")
+              else:
+                  fh.write("has_changes=false\n")
+                  print("No protocol changes detected")
+          EOF
+
+      - name: Generate GitHub App token
+        if: steps.detect.outputs.has_changes == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: biolm-web
+
+      - name: Dispatch to biolm-web
+        if: steps.detect.outputs.has_changes == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: BioLM/biolm-web
+          event-type: protocol-sync
+          client-payload: |
+            {
+              "protocols": ${{ steps.detect.outputs.protocols }},
+              "source_sha": "${{ github.sha }}"
+            }
