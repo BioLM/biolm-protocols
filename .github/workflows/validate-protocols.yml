@@ -1,0 +1,174 @@
+name: Validate Protocol YAMLs
+
+on:
+  pull_request:
+    paths:
+      - "single_model/*.yaml"
+      - "single_model/*.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Structural validation (local)
+        id: local
+        run: |
+          python3 - <<'EOF'
+          import sys
+          import pathlib
+          import subprocess
+          import json
+
+          try:
+              import yaml
+          except ImportError:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "-q"])
+              import yaml
+
+          REQUIRED_TOP = {"name", "inputs"}
+          REQUIRED_TASK = {"id", "request_body", "response_mapping"}
+          ALLOWED_ACTIONS = {"predict", "encode", "generate", "similarity", "score"}
+
+          changed = subprocess.run(
+              ["git", "diff", "--name-only", "origin/${{ github.base_ref }}...HEAD"],
+              capture_output=True, text=True,
+          ).stdout.strip().split("\n")
+          changed = [p for p in changed if p.startswith("single_model/") and (p.endswith(".yaml") or p.endswith(".yml"))]
+
+          if not changed:
+              print("No changed protocol YAMLs to validate.")
+              sys.exit(0)
+
+          errors = {}
+          for path in changed:
+              p = pathlib.Path(path)
+              if not p.exists():
+                  continue
+              file_errors = []
+              try:
+                  doc = yaml.safe_load(p.read_text())
+              except yaml.YAMLError as e:
+                  errors[path] = [f"Invalid YAML: {e}"]
+                  continue
+              if not isinstance(doc, dict):
+                  errors[path] = ["Top-level must be a mapping."]
+                  continue
+              missing = REQUIRED_TOP - doc.keys()
+              if missing:
+                  file_errors.append(f"Missing required top-level keys: {sorted(missing)}")
+              if not isinstance(doc.get("inputs"), dict):
+                  file_errors.append("'inputs' must be a mapping.")
+              tasks = doc.get("tasks") or doc.get("pipeline") or []
+              if isinstance(tasks, dict):
+                  tasks = list(tasks.values())
+              for i, task in enumerate(tasks or [], start=1):
+                  if not isinstance(task, dict):
+                      file_errors.append(f"Task {i} is not a mapping.")
+                      continue
+                  if task.get("type", "").lower() == "gather":
+                      continue
+                  if "slug" in task or "action" in task:
+                      slug = (task.get("slug") or "").strip()
+                      action = (task.get("action") or "").strip()
+                      if not slug or not action:
+                          file_errors.append(f"Task {i}: both 'slug' and 'action' must be set together.")
+                      elif action not in ALLOWED_ACTIONS:
+                          file_errors.append(f"Task {i}: unsupported action '{action}'. Allowed: {sorted(ALLOWED_ACTIONS)}")
+                  rb = task.get("request_body")
+                  if not isinstance(rb, dict) or "items" not in rb:
+                      file_errors.append(f"Task {i}: missing 'request_body.items'.")
+                  rm = task.get("response_mapping")
+                  if not isinstance(rm, dict) or not rm:
+                      file_errors.append(f"Task {i}: missing 'response_mapping'.")
+              if file_errors:
+                  errors[path] = file_errors
+
+          if errors:
+              print("Structural validation FAILED:")
+              for path, errs in errors.items():
+                  print(f"\n  {path}:")
+                  for e in errs:
+                      print(f"    - {e}")
+              sys.exit(1)
+          else:
+              print(f"Structural validation passed for {len(changed)} file(s).")
+          EOF
+
+      - name: Full validation via biolm.ai API
+        if: ${{ env.BIOLMAI_VALIDATION_TOKEN != '' }}
+        env:
+          BIOLMAI_VALIDATION_TOKEN: ${{ secrets.BIOLMAI_VALIDATION_TOKEN }}
+        run: |
+          python3 - <<'EOF'
+          import sys
+          import pathlib
+          import subprocess
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          try:
+              import yaml
+          except ImportError:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml", "-q"])
+              import yaml
+
+          token = os.environ["BIOLMAI_VALIDATION_TOKEN"]
+          api_url = "https://biolm.ai/console/api/protocols/validate/"
+
+          changed = subprocess.run(
+              ["git", "diff", "--name-only", "origin/${{ github.base_ref }}...HEAD"],
+              capture_output=True, text=True,
+          ).stdout.strip().split("\n")
+          changed = [p for p in changed if p.startswith("single_model/") and (p.endswith(".yaml") or p.endswith(".yml"))]
+
+          if not changed:
+              print("No changed protocol YAMLs to validate.")
+              sys.exit(0)
+
+          any_fail = False
+          for path in changed:
+              p = pathlib.Path(path)
+              if not p.exists():
+                  continue
+              yaml_text = p.read_text()
+              body = json.dumps({"yaml": yaml_text}).encode()
+              req = urllib.request.Request(
+                  api_url,
+                  data=body,
+                  headers={
+                      "Content-Type": "application/json",
+                      "Authorization": f"Token {token}",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      result = json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  print(f"{path}: API error {e.code} — {e.reason}")
+                  any_fail = True
+                  continue
+              except Exception as e:
+                  print(f"{path}: Could not reach validation API — {e}")
+                  any_fail = True
+                  continue
+
+              if result.get("ok"):
+                  tasks_ok = all(t.get("status") != "error" for t in result.get("tasks", []))
+                  print(f"{path}: OK (name={result.get('name')}, tasks={len(result.get('tasks', []))})")
+              else:
+                  any_fail = True
+                  print(f"{path}: FAILED")
+                  for err in result.get("errors", []):
+                      print(f"  - {err}")
+                  for task in result.get("tasks", []):
+                      if task.get("status") == "error":
+                          for issue in task.get("issues", []):
+                              print(f"  - task '{task['id']}': {issue}")
+
+          sys.exit(1 if any_fail else 0)
+          EOF
