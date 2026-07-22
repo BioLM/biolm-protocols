@@ -1,11 +1,13 @@
 name: RFdiffusion3 Protein Binder Design
 description: De novo design of protein binders to a target structure using RFdiffusion3 (all-atom diffusion).
 example_inputs:
-  target_chain_id: A
   contig: 50-120,/0,A17-131
   num_designs: 4
+  is_non_loopy: true
+  infer_ori_strategy: hotspots
   num_diffusion_steps: 200
   step_scale: 1.5
+  gamma_0: 0.6
   temperature: 1.0
 inputs:
   target_structure_cif:
@@ -18,16 +20,6 @@ inputs:
       a novel protein binder that contacts this target. Obtain structures from
       the PDB (rcsb.org) or from a structure prediction tool such as RosettaFold3
       or Boltz2.
-  target_chain_id:
-    type: text
-    label: Target Chain ID
-    required: true
-    initial: A
-    min_length: 1
-    max_length: 2
-    help_text: >
-      Single-letter chain identifier of the target binding site (e.g., 'A').
-      The binder will be positioned against residues in this chain.
   contig:
     type: text
     label: Contig String
@@ -42,6 +34,18 @@ inputs:
       pins target residues with fixed coordinates. Example: '50-120,/0,A17-131'
       designs a 50-120 residue binder against chain A residues 17-131. Increase
       the length range for more structural diversity.
+  select_hotspots:
+    type: text
+    label: Hotspot Residues (JSON)
+    optional: true
+    initial: ''
+    max_length: 2000
+    help_text: >
+      Atom-level hotspots on the target to drive binder placement, as a JSON
+      object mapping residue identifiers to atom names. Example:
+      {"A56": "CG,OH", "A115": "CG,SD", "A123": "CD2,OH"}. Use residue
+      identifiers from the target structure. Recommended for binder design;
+      pair with infer_ori_strategy=hotspots.
   num_designs:
     type: integer
     label: Number of Designs
@@ -52,6 +56,25 @@ inputs:
     help_text: >
       Number of independent binder structures to generate. Larger batches increase
       the chance of finding a highly designable scaffold.
+  is_non_loopy:
+    type: boolean
+    label: Non-Loopy Conditioning
+    optional: true
+    initial: true
+    help_text: >
+      Encourage structured (non-loopy) designs. The paper recommends enabling
+      this for binder design to improve designability.
+  infer_ori_strategy:
+    type: text
+    label: Origin Strategy
+    optional: true
+    initial: hotspots
+    min_length: 3
+    max_length: 10
+    help_text: >
+      Strategy for placing the binder origin relative to the target. 'hotspots'
+      positions the binder near the specified hotspot residues (recommended when
+      select_hotspots is set). 'com' uses the target center-of-mass.
   num_diffusion_steps:
     type: integer
     label: Diffusion Steps
@@ -75,9 +98,21 @@ inputs:
     help_text: >
       Scales diffusion step size. Higher values produce more designable, less
       diverse scaffolds; lower values increase diversity. The paper recommends
-      the default 1.5 for binder design. Pair with decreasing gamma_0 (via
-      step_scale > 1.5) to push toward lower-temperature, higher-designability
-      outputs.
+      1.5 for binder design.
+  gamma_0:
+    type: float
+    label: Gamma (Langevin Noise)
+    optional: true
+    advanced: true
+    initial: '0.6'
+    min: 0.0
+    max: 1.0
+    step: 0.05
+    help_text: >
+      Langevin noise coefficient. Lower values reduce stochasticity, yielding
+      more designable but less diverse outputs. Default 0.6. Decrease alongside
+      increasing step_scale to push toward high-designability low-temperature
+      sampling.
   temperature:
     type: float
     label: Sampling Temperature
@@ -89,8 +124,7 @@ inputs:
     step: 0.1
     help_text: >
       Sampling temperature. Lower values (0.5-0.8) favor designable, compact
-      binders. Higher values (1.2-2.0) increase structural diversity. Start at
-      1.0 and adjust based on downstream ProteinMPNN/RosettaFold3 validation.
+      binders. Higher values (1.2-2.0) increase structural diversity.
 progress:
   total_expected: ${{ num_designs }}
 tasks:
@@ -103,6 +137,7 @@ tasks:
       diffusion_batch_size: ${{ num_designs }}
       temperature: ${{ temperature }}
       step_scale: ${{ step_scale }}
+      gamma_0: ${{ gamma_0 }}
       conditioning_mode: binder_design
       include_trajectories: false
     items:
@@ -110,9 +145,10 @@ tasks:
       components:
       - name: target
         structure_cif: ${{ target_structure_cif }}
-        chain_id: ${{ target_chain_id }}
       contig: ${{ contig }}
-      target_chain: ${{ target_chain_id }}
+      is_non_loopy: ${{ is_non_loopy }}
+      infer_ori_strategy: ${{ infer_ori_strategy }}
+      select_hotspots: ${{ select_hotspots }}
   response_mapping:
     structure_cif: ${{ response.results[0][*].structure_cif }}
   fail_on_error: true
