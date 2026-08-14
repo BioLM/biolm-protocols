@@ -1,0 +1,169 @@
+name: BoltzGen Protein Binder Design
+description: >
+  De novo protein binder design with BoltzGen. Generates binder backbones against a
+  target protein, inverse-folds sequences onto them, refolds and filters, and returns
+  designs ranked by predicted binder-to-target interface confidence (ipTM). Large
+  campaigns are automatically sharded across GPU containers.
+
+example_inputs:
+  target_sequence: GGGGGGGILPWKWPWWPWRRGGGGGGG
+  binder_length: "120..140"
+  protocol: protein-anything
+  n_designs: 10
+  inverse_fold_num_sequences: 1
+
+inputs:
+  target_sequence:
+    type: text
+    label: Target Protein Sequence
+    required: true
+    min_length: 1
+    max_length: 5000
+    help_text: >
+      Amino-acid sequence (one-letter code) of the target the binder should bind.
+      Held fixed during design; BoltzGen designs a new chain that contacts it.
+  binder_length:
+    type: text
+    label: Binder Length
+    required: true
+    initial: "120..140"
+    min_length: 1
+    max_length: 20
+    help_text: >
+      Length of the binder to design. Use a range like '120..140' to let BoltzGen
+      pick a length in that window, or a single integer (e.g. '130') for a fixed
+      length. Longer ranges give more structural diversity.
+  protocol:
+    type: select
+    label: Design Protocol
+    required: true
+    initial: protein-anything
+    choices:
+      - protein-anything
+      - peptide-anything
+      - protein-small_molecule
+      - nanobody-anything
+    help_text: >
+      Design task. 'protein-anything' designs a protein binder against the target;
+      'peptide-anything' designs a short peptide; 'nanobody-anything' designs a
+      nanobody; 'protein-small_molecule' designs against a small-molecule ligand.
+  n_designs:
+    type: integer
+    label: Number of Designs
+    required: true
+    initial: '10'
+    min: 1
+    max: 100000
+    help_text: >
+      Total number of designs to generate. Campaigns larger than the per-container
+      limit are automatically split across parallel GPU shards.
+  inverse_fold_num_sequences:
+    type: integer
+    label: Sequences per Backbone
+    optional: true
+    advanced: true
+    initial: '1'
+    min: 1
+    max: 10
+    help_text: >
+      Number of amino-acid sequences inverse-folded onto each generated backbone.
+      Increasing this explores more sequence space on the same geometry.
+  noise_scale:
+    type: float
+    label: Noise Scale
+    optional: true
+    advanced: true
+    initial: '1.0'
+    min: 0.0
+    max: 2.0
+    step: 0.05
+    help_text: >
+      Noise injection scale during diffusion sampling. Higher values increase
+      diversity; lower values increase designability. 1.0 is a reasonable default.
+  binder_chain_id:
+    type: text
+    label: Binder Chain ID
+    optional: true
+    advanced: true
+    initial: 'A'
+    min_length: 1
+    max_length: 4
+    help_text: Chain ID assigned to the designed binder in the output structure. Typically 'A'.
+  target_chain_id:
+    type: text
+    label: Target Chain ID
+    optional: true
+    advanced: true
+    initial: 'B'
+    min_length: 1
+    max_length: 4
+    help_text: Chain ID assigned to the target in the output structure. Typically 'B'.
+  max_designs_per_shard:
+    type: integer
+    label: Designs per Shard
+    optional: true
+    advanced: true
+    initial: '500'
+    min: 1
+    max: 500
+    help_text: >
+      Maximum designs generated per GPU container (BoltzGen per-call limit is 500).
+      The campaign is split into ceil(n_designs / this) shards run in parallel.
+
+progress:
+  total_expected: ${{ n_designs }}
+
+ranking:
+  field: design_to_target_iptm
+  order: descending
+  top_n: 10
+
+concurrency:
+  workflow: 1
+  tasks: 8
+
+writing:
+  deduplicate: true
+
+tasks:
+  # Sharded design generation. Each shard is one GPU container running the full
+  # BoltzGen pipeline (design -> inverse-fold -> fold -> filter) for a chunk of
+  # the campaign. Ceil-division count + subtask.index chunking make the shards
+  # sum to exactly n_designs; per-shard budget = per-shard num_designs so the
+  # FILTERING step returns every design generated (budget default 100 would cap it).
+  - id: boltzgen_design
+    slug: boltzgen
+    action: generate
+    subtasks:
+      count: ${{ max(1, (n_designs + max_designs_per_shard - 1) // max_designs_per_shard) }}
+      split_params:
+        num_designs: ${{ max(1, min(max_designs_per_shard, n_designs - subtask.index * max_designs_per_shard)) }}
+        budget:      ${{ max(1, min(max_designs_per_shard, n_designs - subtask.index * max_designs_per_shard)) }}
+    request_body:
+      params:
+        protocol:                   ${{ protocol }}
+        num_designs:                ${{ n_designs }}
+        budget:                     ${{ n_designs }}
+        noise_scale:                ${{ noise_scale }}
+        inverse_fold_num_sequences: ${{ inverse_fold_num_sequences }}
+      items:
+        - entities:
+            - protein:
+                id: ${{ binder_chain_id }}
+                sequence: ${{ binder_length }}
+                cyclic: false
+            - protein:
+                id: ${{ target_chain_id }}
+                sequence: ${{ target_sequence }}
+                cyclic: false
+    response_mapping:
+      cif:                      ${{ response.results[*].cif }}
+      sequence:                 ${{ response.results[*].sequence }}
+      design_to_target_iptm:    ${{ response.results[*].metrics.design_to_target_iptm }}
+      design_ptm:               ${{ response.results[*].metrics.design_ptm }}
+      min_design_to_target_pae: ${{ response.results[*].metrics.min_design_to_target_pae }}
+      filter_rmsd:              ${{ response.results[*].metrics.filter_rmsd }}
+      liability_score:          ${{ response.results[*].metrics.liability_score }}
+      final_rank:               ${{ response.results[*].metrics.final_rank }}
+      job_id:                   ${{ response.job_id }}
+    fail_on_error: true
