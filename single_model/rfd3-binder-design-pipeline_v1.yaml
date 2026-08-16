@@ -1,0 +1,282 @@
+name: RFdiffusion3 Full Binder Design Pipeline
+description: >
+  End-to-end protein binder design: RFdiffusion3 generates binder backbone conditioned on a target
+  structure, HyperMPNN redesigns sequences for diversity, and Boltz2 cofolds binder+target to
+  validate binding geometry. Returns designed sequences with cofolded structures and interface
+  confidence scores (ipTM).
+example_inputs:
+  contig: 50-80,/0,A17-80
+  num_designs: 4
+  mpnn_temperature: 0.1
+  mpnn_num_sequences: 4
+  num_diffusion_steps: 200
+  step_scale: 1.5
+  temperature: 1.0
+  binder_chain_id: B
+  target_chain_id: A
+  boltz_sampling_steps: 20
+  boltz_recycling_steps: 3
+
+inputs:
+  target_structure_cif:
+    type: pdb_text
+    label: Target Structure (mmCIF or PDB)
+    required: true
+    max_length: 5000000
+    help_text: >
+      Target protein structure in mmCIF or PDB format. RFdiffusion3 will design
+      a novel binder that contacts this target. Obtain structures from the PDB
+      (rcsb.org) or from a structure prediction tool such as Boltz2.
+  target_sequence:
+    type: text
+    label: Target Protein Sequence
+    required: true
+    min_length: 10
+    max_length: 5000
+    help_text: >
+      Amino acid sequence (one-letter code) of the target protein chain. Used by
+      Boltz2 to cofold the designed binder against the target for validation.
+      Must correspond to the chain specified by target_chain_id in the structure.
+  contig:
+    type: text
+    label: Contig String
+    required: true
+    initial: 50-80,/0,A17-80
+    min_length: 3
+    max_length: 500
+    help_text: >
+      Specifies binder length range and target residues in RFdiffusion3 contig syntax.
+      Format: '<min_len>-<max_len>,/0,<Chain><start>-<end>'. Example: '50-80,/0,A17-80'
+      designs a 50–80 residue binder against chain A residues 17–80. Increase the
+      length range for more structural diversity.
+  num_designs:
+    type: integer
+    label: Number of RFD3 Designs
+    required: true
+    initial: '4'
+    min: 1
+    max: 16
+    help_text: Number of independent binder backbones RFdiffusion3 will generate.
+  mpnn_num_sequences:
+    type: integer
+    label: MPNN Sequences per Design
+    optional: true
+    advanced: true
+    initial: '4'
+    min: 1
+    max: 100
+    help_text: >
+      Number of sequences HyperMPNN designs per backbone. Increasing this explores
+      more of sequence space on the same backbone geometry.
+  mpnn_temperature:
+    type: float
+    label: MPNN Temperature
+    optional: true
+    advanced: true
+    initial: '0.1'
+    min: 0.01
+    max: 1.0
+    step: 0.05
+    help_text: >
+      Sampling temperature for HyperMPNN. Lower values (0.05–0.15) produce more
+      confident, higher-recovery sequences; higher values increase diversity.
+  binder_chain_id:
+    type: text
+    label: Binder Chain ID
+    optional: true
+    advanced: true
+    initial: 'B'
+    min_length: 1
+    max_length: 4
+    help_text: >
+      Chain ID that RFdiffusion3 assigns to the designed binder in its output structure.
+      Typically 'B'. HyperMPNN will redesign only this chain.
+  target_chain_id:
+    type: text
+    label: Target Chain ID
+    optional: true
+    advanced: true
+    initial: 'A'
+    min_length: 1
+    max_length: 4
+    help_text: Chain ID of the target protein in the output structure. Typically 'A'.
+  num_diffusion_steps:
+    type: integer
+    label: RFD3 Diffusion Steps
+    optional: true
+    advanced: true
+    initial: '200'
+    min: 50
+    max: 500
+    help_text: >
+      Number of denoising steps for RFdiffusion3. More steps improve quality but
+      increase runtime. 200 is the recommended default; 50 is useful for quick tests.
+  step_scale:
+    type: float
+    label: RFD3 Step Scale
+    optional: true
+    advanced: true
+    initial: '1.5'
+    min: 1.0
+    max: 2.0
+    step: 0.05
+    help_text: >
+      Scales the RFdiffusion3 step size. Higher values reduce diversity and improve
+      designability. Recommended: 1.5.
+  temperature:
+    type: float
+    label: RFD3 Temperature
+    optional: true
+    advanced: true
+    initial: '1.0'
+    min: 0.1
+    max: 2.0
+    step: 0.1
+    help_text: RFdiffusion3 sampling temperature. 1.0 is the default; lower values reduce diversity.
+  boltz_sampling_steps:
+    type: integer
+    label: Boltz2 Sampling Steps
+    optional: true
+    advanced: true
+    initial: '20'
+    min: 1
+    max: 200
+    help_text: Diffusion sampling steps for Boltz2 cofolding. 20 is sufficient for validation.
+  boltz_recycling_steps:
+    type: integer
+    label: Boltz2 Recycling Steps
+    optional: true
+    advanced: true
+    initial: '3'
+    min: 1
+    max: 10
+    help_text: Recycling iterations for Boltz2. 3 is the default.
+
+progress:
+  total_expected: ${{ num_designs * mpnn_num_sequences }}
+
+# Pipeline: RFD3 (binder backbone, batch=num_designs) -> gather -> biotite.encode
+# (CIF->PDB per design) -> gather -> HyperMPNN (sequence redesign per backbone) ->
+# gather -> Boltz2 (cofold binder+target per sequence). Each hop collects the prior
+# stage's list and fans out over it, so multi-design / multi-sequence runs are handled.
+tasks:
+- id: rfd3_binder_design
+  slug: rfd3
+  action: generate
+  request_body:
+    params:
+      num_diffusion_steps: ${{ num_diffusion_steps }}
+      diffusion_batch_size: ${{ num_designs }}
+      temperature: ${{ temperature }}
+      step_scale: ${{ step_scale }}
+      conditioning_mode: binder_design
+      include_trajectories: false
+    items:
+    - name: binder_design
+      components:
+      - name: target
+        structure_cif: ${{ target_structure_cif }}
+      contig: ${{ contig }}
+  response_mapping:
+    structure_cif: ${{ response.results[0][*].structure_cif }}
+  fail_on_error: true
+
+- id: gather_cif
+  type: gather
+  from: rfd3_binder_design
+  fields:
+  - structure_cif
+  depends_on:
+  - rfd3_binder_design
+  into: 1
+  skip_if_empty: true
+
+- id: biotite_parse_cif
+  slug: biotite
+  action: encode
+  depends_on:
+  - gather_cif
+  foreach: ${{ gather_cif.results }}
+  skip_if_empty: true
+  request_body:
+    items:
+    - cif_string: ${{ item.structure_cif }}
+      chain_ids:
+      - ${{ binder_chain_id }}
+      - ${{ target_chain_id }}
+  response_mapping:
+    pdb_string: ${{ response.results[*].pdb_string }}
+    chain_sequences: ${{ response.results[*].chain_sequences }}
+  fail_on_error: true
+
+- id: gather_pdb
+  type: gather
+  from: biotite_parse_cif
+  fields:
+  - pdb_string
+  depends_on:
+  - biotite_parse_cif
+  into: 1
+  skip_if_empty: true
+
+- id: hypermpnn_design
+  slug: hyper-mpnn
+  action: generate
+  depends_on:
+  - gather_pdb
+  foreach: ${{ gather_pdb.results }}
+  skip_if_empty: true
+  request_body:
+    params:
+      temperature: ${{ mpnn_temperature }}
+      number_of_batches: 1
+      batch_size: ${{ mpnn_num_sequences }}
+      chains_to_design:
+      - ${{ binder_chain_id }}
+    items:
+    - pdb: ${{ item.pdb_string }}
+  response_mapping:
+    sequence: ${{ response.results[*].sequence }}
+    overall_confidence: ${{ response.results[*].overall_confidence }}
+    seq_rec: ${{ response.results[*].seq_rec }}
+  fail_on_error: true
+
+- id: gather_sequences
+  type: gather
+  from: hypermpnn_design
+  fields:
+  - sequence
+  depends_on:
+  - hypermpnn_design
+  into: 1
+  skip_if_empty: true
+
+- id: boltz2_cofold
+  slug: boltz2
+  action: predict
+  depends_on:
+  - gather_sequences
+  foreach: ${{ gather_sequences.results }}
+  skip_if_empty: true
+  request_body:
+    params:
+      recycling_steps: ${{ boltz_recycling_steps }}
+      sampling_steps: ${{ boltz_sampling_steps }}
+      diffusion_samples: 1
+      seed: 42
+      potentials: true
+      include: [plddt]
+    items:
+    - molecules:
+      - id: ${{ binder_chain_id }}
+        type: protein
+        sequence: ${{ item.sequence }}
+      - id: ${{ target_chain_id }}
+        type: protein
+        sequence: ${{ target_sequence }}
+  response_mapping:
+    cofold_cif: ${{ response.results[*].cif }}
+    confidence_score: ${{ response.results[*].confidence.confidence_score }}
+    iptm: ${{ response.results[*].confidence.iptm }}
+    complex_plddt: ${{ response.results[*].confidence.complex_plddt }}
+  fail_on_error: false

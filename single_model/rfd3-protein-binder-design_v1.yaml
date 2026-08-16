@@ -1,0 +1,154 @@
+name: RFdiffusion3 Protein Binder Design
+description: De novo design of protein binders to a target structure using RFdiffusion3 (all-atom diffusion).
+example_inputs:
+  contig: 50-120,/0,A17-131
+  num_designs: 4
+  is_non_loopy: true
+  infer_ori_strategy: hotspots
+  num_diffusion_steps: 200
+  step_scale: 1.5
+  gamma_0: 0.6
+  temperature: 1.0
+inputs:
+  target_structure_cif:
+    type: pdb_text
+    label: Target Structure (mmCIF or PDB)
+    required: true
+    max_length: 5000000
+    help_text: >
+      Target protein structure in mmCIF or PDB format. RFdiffusion3 will design
+      a novel protein binder that contacts this target. Obtain structures from
+      the PDB (rcsb.org) or from a structure prediction tool such as RosettaFold3
+      or Boltz2.
+  contig:
+    type: text
+    label: Contig String
+    required: true
+    initial: 50-120,/0,A17-131
+    min_length: 3
+    max_length: 500
+    help_text: >
+      Specifies binder length and target residues in RFdiffusion3 contig syntax.
+      Format: '<min_len>-<max_len>,/0,<Chain><start>-<end>'. The first segment
+      is the binder (diffused de novo); /0 separates chains; the second segment
+      pins target residues with fixed coordinates. Example: '50-120,/0,A17-131'
+      designs a 50-120 residue binder against chain A residues 17-131. Increase
+      the length range for more structural diversity.
+  select_hotspots:
+    type: text
+    label: Hotspot Residues (JSON)
+    optional: true
+    initial: ''
+    max_length: 2000
+    help_text: >
+      Atom-level hotspots on the target to drive binder placement, as a JSON
+      object mapping residue identifiers to atom names. Example:
+      {"A56": "CG,OH", "A115": "CG,SD", "A123": "CD2,OH"}. Use residue
+      identifiers from the target structure. Recommended for binder design;
+      pair with infer_ori_strategy=hotspots.
+  num_designs:
+    type: integer
+    label: Number of Designs
+    optional: true
+    initial: '4'
+    min: 1
+    max: 16
+    help_text: >
+      Number of independent binder structures to generate. Larger batches increase
+      the chance of finding a highly designable scaffold.
+  is_non_loopy:
+    type: boolean
+    label: Non-Loopy Conditioning
+    optional: true
+    initial: true
+    help_text: >
+      Encourage structured (non-loopy) designs. The paper recommends enabling
+      this for binder design to improve designability.
+  infer_ori_strategy:
+    type: text
+    label: Origin Strategy
+    optional: true
+    initial: hotspots
+    min_length: 3
+    max_length: 10
+    help_text: >
+      Strategy for placing the binder origin relative to the target. 'hotspots'
+      positions the binder near the specified hotspot residues (recommended when
+      select_hotspots is set). 'com' uses the target center-of-mass.
+  num_diffusion_steps:
+    type: integer
+    label: Diffusion Steps
+    optional: true
+    advanced: true
+    initial: '200'
+    min: 50
+    max: 500
+    help_text: >
+      Number of denoising timesteps. 200 (default) balances quality and speed.
+      Increasing to 400-500 can improve structural quality at the cost of runtime.
+  step_scale:
+    type: float
+    label: Step Scale
+    optional: true
+    advanced: true
+    initial: '1.5'
+    min: 1.0
+    max: 2.0
+    step: 0.05
+    help_text: >
+      Scales diffusion step size. Higher values produce more designable, less
+      diverse scaffolds; lower values increase diversity. The paper recommends
+      1.5 for binder design.
+  gamma_0:
+    type: float
+    label: Gamma (Langevin Noise)
+    optional: true
+    advanced: true
+    initial: '0.6'
+    min: 0.0
+    max: 1.0
+    step: 0.05
+    help_text: >
+      Langevin noise coefficient. Lower values reduce stochasticity, yielding
+      more designable but less diverse outputs. Default 0.6. Decrease alongside
+      increasing step_scale to push toward high-designability low-temperature
+      sampling.
+  temperature:
+    type: float
+    label: Sampling Temperature
+    optional: true
+    advanced: true
+    initial: '1.0'
+    min: 0.1
+    max: 2.0
+    step: 0.1
+    help_text: >
+      Sampling temperature. Lower values (0.5-0.8) favor designable, compact
+      binders. Higher values (1.2-2.0) increase structural diversity.
+progress:
+  total_expected: ${{ num_designs }}
+tasks:
+- id: rfd3_binder_design
+  slug: rfd3
+  action: generate
+  request_body:
+    params:
+      num_diffusion_steps: ${{ num_diffusion_steps }}
+      diffusion_batch_size: ${{ num_designs }}
+      temperature: ${{ temperature }}
+      step_scale: ${{ step_scale }}
+      gamma_0: ${{ gamma_0 }}
+      conditioning_mode: binder_design
+      include_trajectories: false
+    items:
+    - name: binder_design
+      components:
+      - name: target
+        structure_cif: ${{ target_structure_cif }}
+      contig: ${{ contig }}
+      is_non_loopy: ${{ is_non_loopy }}
+      infer_ori_strategy: ${{ infer_ori_strategy }}
+      select_hotspots: ${{ select_hotspots }}
+  response_mapping:
+    structure_cif: ${{ response.results[0][*].structure_cif }}
+  fail_on_error: true
