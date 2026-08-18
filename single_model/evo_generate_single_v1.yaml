@@ -1,0 +1,111 @@
+name: Evo Generate
+description: Extend or complete DNA sequences from a prompt for design, screening, or sequence exploration.
+
+example_inputs:
+  prompt: "ATGCGTACGT"
+  max_new_tokens: 50
+  temperature: 0.7
+  top_k: 40
+  top_p: 0.9
+  num_sequences: 100
+  deduplication: true
+
+concurrency:
+  workflow: 1
+  tasks: 10
+
+inputs:
+  prompt:
+    type: text
+    label: DNA prompt
+    required: true
+    help_text: DNA sequence used as prompt for generation
+    initial: ''
+    min_length: 1
+    max_length: 4096
+  max_new_tokens:
+    type: integer
+    label: Max new tokens
+    optional: true
+    initial: '100'
+    min: 1
+    max: 4096
+    help_text: Maximum number of tokens to generate
+  temperature:
+    type: float
+    label: Temperature
+    optional: true
+    initial: '0.0'
+    min: 0.0
+    help_text: Sampling temperature
+  top_k:
+    type: integer
+    label: Top K
+    optional: true
+    initial: '1'
+    min: 1
+    help_text: Top-k sampling
+  top_p:
+    type: float
+    label: Top P
+    optional: true
+    initial: '1.0'
+    min: 0.0
+    max: 1.0
+    help_text: Nucleus sampling threshold
+  num_sequences:
+    type: integer
+    label: Num sequences
+    optional: true
+    initial: '100'
+    min: 1
+    max: 50000
+    step: 1
+    help_text: Number of sequences to generate (via subtasks; at least this many returned)
+  prepend_bos:
+    type: boolean
+    label: Prepend BOS
+    optional: true
+    advanced: true
+    initial: false
+    help_text: Prepend beginning-of-sequence token (advanced)
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: true
+    help_text: Remove duplicate generated records from results
+
+progress:
+  total_expected: ${{ num_sequences }}
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+ranking:
+  field: score
+  order: descending
+  top_n: 10
+
+tasks:
+  - id: evo_generate
+    app: evo-v1.5-8k
+    class: EvoModel
+    method: generate
+    subtasks:
+      count: ${{ (num_sequences + 1) // 2 }}
+      split_params: {}
+    request_body:
+      params:
+        max_new_tokens: ${{ max_new_tokens }}
+        temperature: ${{ temperature }}
+        top_k: ${{ top_k }}
+        top_p: ${{ top_p }}
+        prepend_bos: ${{ prepend_bos }}
+      items:
+        - prompt: ${{ prompt }}
+        - prompt: ${{ prompt }}
+    response_mapping:
+      generated: ${{ response.results[*].generated }}
+      score: ${{ response.results[*].score }}
+    fail_on_error: true

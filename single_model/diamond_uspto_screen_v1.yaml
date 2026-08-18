@@ -1,0 +1,121 @@
+# DIAMOND USPTO Screen — list of sequences, screen against USPTO.
+
+# The Diamond API expects items to be list of DiamondPredictRequestItem (dict with "sequence" key).
+# A gather task converts list_of_str (sequences) into that shape; the predict task uses items: ${{ item }}.
+name: DIAMOND USPTO Screen
+description: Screen a list of protein sequences against the USPTO patent database using
+  DIAMOND with adjustable sensitivity. Returns the top hit per query sequence for conflict
+  detection in larger libraries.
+
+example_inputs:
+  sequences:
+  - MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPIL
+  - MKFLKFSLLTAVLLSVVFAFSSCGDDDD
+  e_value: 0.001
+  max_hits: 1
+  block_size: 6.0
+  sensitivity: "fast"
+  database: "uspto"
+  batch_size: 10
+
+inputs:
+  sequences:
+    type: list_of_str
+    label: Protein sequences
+    required: true
+    max_length: 100000
+    max_input_length: 1000000
+    help_text: List of protein sequences to screen against the USPTO patent database
+  e_value:
+    type: float
+    label: E-value threshold
+    optional: true
+    initial: '0.001'
+    help_text: E-value threshold for BLAST hits
+  max_hits:
+    type: integer
+    label: Max hits
+    optional: true
+    initial: '1'
+    min: 1
+    max: 100
+    help_text: Maximum number of hits per query (use 1 for screening purposes)
+  block_size:
+    type: float
+    label: Block size
+    optional: true
+    advanced: true
+    initial: '6.0'
+    min: 1.0
+    max: 10.0
+    help_text: DIAMOND block size parameter (billions of sequences to search concurrently)
+  sensitivity:
+    type: select
+    label: Sensitivity
+    optional: true
+    initial: 'fast'
+    choices: ["fast", "mid-sensitive", "sensitive", "more-sensitive", "very-sensitive", "ultra-sensitive"]
+    help_text: Search sensitivity (fast = fastest, ultra-sensitive = most accurate)
+  database:
+    type: select
+    label: Database
+    optional: true
+    choices: ["uspto"]
+    initial: 'uspto'
+    help_text: Database to search (e.g. USPTO)
+  batch_size:
+    type: integer
+    label: Batch size
+    optional: true
+    advanced: true
+    initial: '10'
+    min: 1
+    max: 100
+    help_text: Number of sequences per batch sent to each DIAMOND instance
+
+progress:
+  total_expected: ${{ len(sequences) }}
+
+ranking:
+  field: score
+  order: descending
+  top_n: 10
+
+writing:
+  deduplicate: true
+  max_dedupe_size: 500
+
+tasks:
+  - id: sequences_batch
+    type: gather
+    from: sequences
+    fields: [sequence]
+    into: ${{ batch_size }}
+    skip_if_empty: true
+
+  - id: diamond_uspto_screen
+    slug: diamond
+    action: predict
+    depends_on: [sequences_batch]
+    foreach: ${{ sequences_batch.results }}
+    skip_if: ${{ sequences_batch.empty }}
+    request_body:
+      params:
+        e_value: ${{ e_value }}
+        max_hits: ${{ max_hits }}
+        block_size: ${{ block_size }}
+        sensitivity: ${{ sensitivity }}
+        databases:
+          - "${{ database }}"
+      items: ${{ item }}
+    include_in_response:
+      items_fields: [sequence]
+    response_mapping:
+      identity: ${{ response.results[*].sequences[*].identity }}
+      e_value: ${{ response.results[*].sequences[*].e_value }}
+      score: ${{ response.results[*].sequences[*].score }}
+      subject_id: ${{ response.results[*].sequences[*].subject_id }}
+      subject_seq: ${{ response.results[*].sequences[*].subject_seq }}
+      cigar: ${{ response.results[*].sequences[*].cigar }}
+      alignment_length: ${{ response.results[*].sequences[*].alignment_length }}
+    fail_on_error: true

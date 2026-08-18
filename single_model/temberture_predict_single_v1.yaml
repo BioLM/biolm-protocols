@@ -1,0 +1,47 @@
+name: TemBERTure Predict
+description: Predict expression temperature or stability for a protein to guide expression or screening.
+
+example_inputs:
+  sequence: "MKFLKFSLLTAVLLSVVFAFSSCGDDDDDDDDDD"
+
+inputs:
+  sequence:
+    type: text
+    label: Protein sequence
+    required: true
+    help_text: Protein sequence for temperature prediction
+    initial: ''
+    min_length: 1
+    max_length: 512
+
+progress:
+  total_expected: 1
+
+ranking:
+  field: prediction
+  order: descending
+  top_n: 10
+
+tasks:
+  - id: temberture_regression
+    app: temberture-regression
+    class: TemBERTureModel
+    method: predict
+    request_body:
+      items:
+        - sequence: ${{ sequence }}
+    response_mapping:
+      prediction: ${{ response.results[*].prediction }}
+      classification: ${{ response.results[*].classification }}
+    fail_on_error: true
+
+  - id: temberture_classification
+    app: temberture-classifier
+    class: TemBERTureModel
+    method: predict
+    request_body:
+      items:
+        - sequence: ${{ sequence }}
+    response_mapping:
+      classification_label: ${{ response.results[*].classification }}
+    fail_on_error: true

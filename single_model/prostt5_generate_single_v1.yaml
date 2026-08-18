@@ -1,0 +1,118 @@
+name: ProstT5 AA to 3Di Generate
+description: Predict and generate structure sequences in Foldseek 3Di format from amino acids to directly search Foldseek without predicting or folding 3D structures/PDBs.
+
+example_inputs:
+  sequence: "ACDEFGHIKGL"
+  temperature: 1.8
+  top_p: 0.80
+  top_k: 20
+  repetition_penalty: 0.5
+  num_beams: 3
+  num_designs: 20
+  deduplication: true
+
+concurrency:
+  workflow: 1
+  tasks: 10
+
+inputs:
+  sequence:
+    type: text
+    label: Protein sequence (AA)
+    required: true
+    help_text: Amino acid sequence for AA-to-fold generation
+    initial: ''
+    min_length: 1
+    max_length: 512
+  temperature:
+    type: float
+    label: Temperature
+    optional: true
+    initial: '1.2'
+    min: 0.0
+    max: 8.0
+    help_text: Sampling temperature
+  top_p:
+    type: float
+    label: Top P
+    optional: true
+    initial: '0.95'
+    min: 0.0
+    max: 1.0
+    help_text: Nucleus sampling
+  num_designs:
+    type: integer
+    label: Num designs
+    optional: true
+    initial: '6'
+    min: 1
+    max: 300
+    help_text: Total number of sequences to generate (via subtasks; up to 6 per request)
+  top_k:
+    type: integer
+    label: Top K
+    optional: true
+    advanced: true
+    initial: '6'
+    min: 1
+    max: 20
+    help_text: Top-k sampling (advanced)
+  repetition_penalty:
+    type: float
+    label: Repetition penalty
+    optional: true
+    advanced: true
+    initial: '1.2'
+    min: 0.0
+    max: 3.0
+    help_text: Repetition penalty (advanced)
+  num_beams:
+    type: integer
+    label: Num beams
+    optional: true
+    advanced: true
+    initial: '3'
+    min: 1
+    max: 3
+    help_text: Beam width (advanced)
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: true
+    help_text: Remove duplicate generated records from results
+
+progress:
+  total_expected: ${{ num_designs }}
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+ranking:
+  field: sequence
+  order: descending
+  top_n: 10
+
+tasks:
+  - id: prostt5_generate
+    app: prostt5-aa2fold-generate
+    class: ProstT5Model
+    method: generate
+    subtasks:
+      count: ${{ (num_designs + 5) // 6 }}
+      split_params:
+        num_samples: ${{ max(1, min(3, (num_designs - subtask.index * 6 + 1) // 2)) }}
+    request_body:
+      params:
+        temperature: ${{ temperature }}
+        top_p: ${{ top_p }}
+        top_k: ${{ top_k }}
+        repetition_penalty: ${{ repetition_penalty }}
+        num_samples: 1
+        num_beams: ${{ num_beams }}
+      items:
+        - sequence: ${{ sequence }}
+        - sequence: ${{ sequence }}
+    response_mapping:
+      sequence: ${{ response.results[0][*].sequence }}
+    fail_on_error: true
