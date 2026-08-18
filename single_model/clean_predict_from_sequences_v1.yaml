@@ -1,0 +1,63 @@
+name: CLEAN Predict from Sequences
+description: Predict EC numbers for a list of protein sequences in batches using the CLEAN model.
+
+example_inputs:
+  sequences: ["MKFLKFSLLTAVLLSVVFAFSSCGDDDD", "GLPRKILCAI"]
+  batch_size: 10
+  deduplication: false
+
+inputs:
+  sequences:
+    type: list_of_str
+    label: Protein sequences
+    required: true
+    max_length: 10000
+    help_text: List of protein sequences for EC number prediction
+  batch_size:
+    type: integer
+    label: Batch Size
+    optional: true
+    advanced: true
+    initial: '10'
+    min: 1
+    max: 10
+    help_text: Number of sequences per batch
+  deduplication:
+    type: boolean
+    label: Deduplicate output
+    optional: true
+    initial: false
+    help_text: Remove duplicate records (by sequence) from results
+
+progress:
+  total_expected: ${{ len(sequences) }}
+
+ranking:
+  field: confidence
+  order: descending
+  top_n: 10
+
+writing:
+  deduplicate: ${{ deduplication }}
+
+tasks:
+  - id: sequences_batch
+    type: gather
+    from: sequences
+    fields: [sequence]
+    into: ${{ batch_size }}
+    skip_if_empty: true
+
+  - id: clean_predict
+    app: clean
+    class: CLEANModel
+    method: predict
+    depends_on: [sequences_batch]
+    foreach: ${{ sequences_batch.results }}
+    skip_if_empty: true
+    request_body:
+      items: ${{ item }}
+    response_mapping:
+      predictions: ${{ response.results[*].predictions }}
+      confidence: ${{ response.results[*].predictions[0].confidence }}
+    fail_on_error: true
