@@ -6,6 +6,7 @@ example_inputs:
   - ATGCGTACGTAAACCGGTT
   - GGCCAATTGGCCAA
   deduplication: false
+  batch_size: 8
 inputs:
   sequences:
     type: list_of_str
@@ -13,6 +14,15 @@ inputs:
     required: true
     max_length: 10000
     help_text: List of DNA or RNA sequences to score
+  batch_size:
+    type: integer
+    label: Batch size
+    optional: true
+    advanced: true
+    initial: '8'
+    min: 1
+    max: 100
+    help_text: Number of sequences to score per batch
   deduplication:
     type: boolean
     label: Deduplicate output

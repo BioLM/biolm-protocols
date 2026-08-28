@@ -77,9 +77,8 @@ ranking:
 
 tasks:
   - id: alphafold2_predict
-    app: alphafold2
-    class: AF2NIMModel
-    method: predict
+    slug: alphafold2
+    action: predict
     request_body:
       items:
         - sequence: ${{ sequence }}
