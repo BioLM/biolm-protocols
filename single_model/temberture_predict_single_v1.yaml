@@ -32,7 +32,6 @@ tasks:
         - sequence: ${{ sequence }}
     response_mapping:
       prediction: ${{ response.results[*].prediction }}
-      classification: ${{ response.results[*].classification }}
     fail_on_error: true
 
   - id: temberture_classification
