@@ -4,7 +4,7 @@ description: Predict intrinsic protein solubility from sequence. Higher score in
 example_inputs:
   sequence: MKFLKFSLLTAVLLSVVFAFSSCGDDDD
   ph: 7.0
-  include_profile: false
+  include_profile: true
 inputs:
   sequence:
     type: text

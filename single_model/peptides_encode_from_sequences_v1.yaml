@@ -57,7 +57,7 @@ tasks:
     skip_if_empty: true
     request_body:
       params:
-        include: []
+        include: ["vector"]
       items: ${{ item }}
     response_mapping:
       aliphatic_index: ${{ response.results[*].features.aliphatic_index }}
